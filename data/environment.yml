@@ -1,0 +1,16 @@
+name: Flumy_3_09
+channels:
+- conda-forge
+- defaults
+dependencies:
+- python = 3.9
+- numpy
+- matplotlib
+- pyvista
+- trame
+- pyvistaqt
+- pyqt
+- h5py
+- pip
+- pip:
+  - flumy

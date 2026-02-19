@@ -5,19 +5,23 @@ import joblib
 from joblib import Parallel, delayed, effective_n_jobs
 from flumy import Flumy
 
-# --- 1. WORKER FUNCTION (STANDALONE - BEST FOR WINDOWS) ---
-def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, output_dir):
+def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, output_dir, show_cores= False):
     """
-    Worker function is defined at the top level of the module.
-    This ensures workers can import it without triggering the main script or pickling the class.
+    Worker function for generating each sample.
+
+    Args:
+        batch_id (int): Unique identifier for the batch.
+        n_samples_in_batch (int): Number of samples to generate in this batch.
+        grid_params (dict): Dictionary containing grid parameters (nx, ny, mesh, nz).
+        sim_params (dict): Dictionary containing simulation parameters (base_seed, max_channel_depth, etc.).
+        output_dir (str): Directory where the output HDF5 file will be saved.
     """
-    # Initialize Manager locally for this process
     manager = FlumyDataManager(output_dir=output_dir)
 
-    pid = os.getpid()
-    print(f"--> Batch {batch_id} is running on Core ID: {pid}")
+    if show_cores:
+        pid = os.getpid()
+        print(f"--> Batch {batch_id} is running on Core ID: {pid}")
     
-    # Create the container
     h5_path = manager.initialize_h5_file(
         batch_id, 
         n_samples_in_batch, 
@@ -26,15 +30,11 @@ def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, 
         grid_params['nz']
     )
     
-    # Loop through samples
     for i in range(n_samples_in_batch):
-        # Create fresh simulator
         flsim = Flumy(grid_params['nx'], grid_params['ny'], grid_params['mesh'], verbose=False)
         
-        # Unique seed calculation
         unique_seed = sim_params['base_seed'] + (batch_id * 10000) + i
         
-        # Launch
         flsim.launch(
             unique_seed, 
             hmax=sim_params['max_channel_depth'], 
@@ -44,13 +44,10 @@ def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, 
             niter=sim_params['niter']
         )
         
-        # Save
         fac, grain, age = flsim.getBlock(dz=sim_params['vertical_resolution'], zb=0, nz=grid_params['nz'])
         manager.save_to_batch(h5_path, index=i, fac=fac, grain=grain, age=age)
         
     return h5_path
-
-# --- 2. CLASSES ---
 
 class FlumyDataManager:
     def __init__(self, output_dir="datasets/training"):
@@ -88,7 +85,6 @@ class BatchSimulator:
         self.output_dir = output_dir
         self.n_jobs = n_jobs
         
-        # Ensure output directory exists
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
@@ -96,21 +92,9 @@ class BatchSimulator:
         """
         Orchestrates the batches.
         """
-        # 1. Report Status
         n_cores_active = effective_n_jobs(self.n_jobs)
         n_batches = int(np.ceil(self.total_samples / self.batch_size))
-        
-        # print(f"\n{'='*40}")
-        # print(f"   PARALLEL EXECUTION STATUS")
-        # print(f"{'='*40}")
-        # print(f"System Total Cores:   {os.cpu_count()}")
-        # print(f"Joblib Active Cores:  {n_cores_active}")
-        # print(f"Total Samples:        {self.total_samples}")
-        # print(f"Batch Size:           {self.batch_size}")
-        # print(f"Total Batch Files:    {n_batches}")
-        # print(f"{'='*40}\n")
 
-        # 2. Generate Job List
         jobs = []
         for i in range(n_batches):
             batch_id = i
@@ -119,8 +103,6 @@ class BatchSimulator:
                 self.total_samples - (batch_id * self.batch_size)
             )
             
-            # CORRECT SYNTAX: delayed(function)(arguments)
-            # We pass self.grid_params etc. explicitly to the external function
             jobs.append(
                 delayed(run_simulation_batch)(
                     batch_id, 
@@ -131,6 +113,5 @@ class BatchSimulator:
                 )
             )
 
-        # 3. Execute
         results = Parallel(n_jobs=self.n_jobs, verbose=5)(jobs)
         return results

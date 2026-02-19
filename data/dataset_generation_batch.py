@@ -2,9 +2,9 @@ import os
 from flumy_utils import BatchSimulator
 
 if __name__ == "__main__":
-    TOTAL_SAMPLES = 36
-    BATCH_SIZE = 3
-    N_JOBS = -1
+    TOTAL_SAMPLES = 36                                              # set to 10000 for full parallelization on TU Delft cluster
+    BATCH_SIZE = 3                                                  # set to 25   "                                            "
+    N_JOBS = -1                                                     # Switch to 128 "                                          "
     OUTPUT_DIR = os.path.join("data", "datasets", "training")
     
     # Grid Parameters
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     )
 
     # --- Execution ---
-    print(f"Generating {TOTAL_SAMPLES} samples...")
+    print(f"Generating {TOTAL_SAMPLES} samples")
     output_files = simulator.run()
     
     print(f"Done! Generated {len(output_files)} batch files.")

@@ -1,53 +1,52 @@
 import os
 import h5py
 import numpy as np
-import joblib
 from joblib import Parallel, delayed, effective_n_jobs
-from flumy import Flumy
 
-def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, output_dir, show_cores= False):
-    """
-    Worker function for generating each sample.
+# def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, output_dir, show_cores= False):
+#     """
+#     Worker function for generating each sample.
 
-    Args:
-        batch_id (int): Unique identifier for the batch.
-        n_samples_in_batch (int): Number of samples to generate in this batch.
-        grid_params (dict): Dictionary containing grid parameters (nx, ny, mesh, nz).
-        sim_params (dict): Dictionary containing simulation parameters (base_seed, max_channel_depth, etc.).
-        output_dir (str): Directory where the output HDF5 file will be saved.
-    """
-    manager = FlumyDataManager(output_dir=output_dir)
+#     Args:
+#         batch_id (int): Unique identifier for the batch.
+#         n_samples_in_batch (int): Number of samples to generate in this batch.
+#         grid_params (dict): Dictionary containing grid parameters (nx, ny, mesh, nz).
+#         sim_params (dict): Dictionary containing simulation parameters (base_seed, max_channel_depth, etc.).
+#         output_dir (str): Directory where the output HDF5 file will be saved.
+#     """
+#     manager = FlumyDataManager(output_dir=output_dir)
 
-    if show_cores:
-        pid = os.getpid()
-        print(f"--> Batch {batch_id} is running on Core ID: {pid}")
+#     if show_cores:
+#         pid = os.getpid()
+#         print(f"--> Batch {batch_id} is running on Core ID: {pid}")
     
-    h5_path = manager.initialize_h5_file(
-        batch_id, 
-        n_samples_in_batch, 
-        grid_params['nx'], 
-        grid_params['ny'], 
-        grid_params['nz']
-    )
+#     h5_path = manager.initialize_h5_file(
+#         batch_id, 
+#         n_samples_in_batch, 
+#         grid_params['nx'], 
+#         grid_params['ny'], 
+#         grid_params['nz']
+#     )
     
-    for i in range(n_samples_in_batch):
-        flsim = Flumy(grid_params['nx'], grid_params['ny'], grid_params['mesh'], verbose=False)
+#     for i in range(n_samples_in_batch):
+#         flsim = Flumy(grid_params['nx'], grid_params['ny'], grid_params['mesh'], verbose=False)
         
-        unique_seed = sim_params['base_seed'] + (batch_id * 10000) + i
+#         unique_seed = sim_params['base_seed'] + (batch_id * 10000) + i
         
-        flsim.launch(
-            unique_seed, 
-            hmax=sim_params['max_channel_depth'], 
-            isbx=sim_params['max_sand_body_extention'], 
-            ng=sim_params['net_gross'], 
-            zul=sim_params['target_height'], 
-            niter=sim_params['niter']
-        )
+#         flsim.launch(
+#             unique_seed, 
+#             hmax=sim_params['max_channel_depth'], 
+#             isbx=sim_params['max_sand_body_extention'], 
+#             ng=sim_params['net_gross'], 
+#             zul=sim_params['target_height'], 
+#             niter=sim_params['niter'],
+#             lvb=sim_params['levee_break']
+#         )
         
-        fac, grain, age = flsim.getBlock(dz=sim_params['vertical_resolution'], zb=0, nz=grid_params['nz'])
-        manager.save_to_batch(h5_path, index=i, fac=fac, grain=grain, age=age)
+#         fac, grain, age = flsim.getBlock(dz=sim_params['vertical_resolution'], zb=0, nz=grid_params['nz'])
+#         manager.save_to_batch(h5_path, index=i, fac=fac, grain=grain, age=age)
         
-    return h5_path
+#     return h5_path
 
 class FlumyDataManager:
     def __init__(self, output_dir="datasets/training"):
@@ -77,7 +76,8 @@ class FlumyDataManager:
             f['age'][index, ...] = age.astype(np.int32)
 
 class BatchSimulator:
-    def __init__(self, total_samples, batch_size, grid_params, sim_params, output_dir, n_jobs=-1):
+    def __init__(self, worker_function, total_samples, batch_size, grid_params, sim_params, output_dir, n_jobs=-1):
+        self.worker = worker_function
         self.total_samples = total_samples
         self.batch_size = batch_size
         self.grid_params = grid_params
@@ -104,7 +104,7 @@ class BatchSimulator:
             )
             
             jobs.append(
-                delayed(run_simulation_batch)(
+                delayed(self.worker)(
                     batch_id, 
                     current_batch_size, 
                     self.grid_params, 

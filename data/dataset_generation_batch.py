@@ -21,7 +21,8 @@ if __name__ == "__main__":
         'max_sand_body_extention': 40,
         'target_height': 10,
         'vertical_resolution': 0.5,
-        'niter': -1
+        'niter': -1,
+        'levee_break':True
     }
 
     # --- Initialization ---

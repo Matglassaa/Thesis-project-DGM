@@ -49,7 +49,28 @@ def groupFacies(fac, grouping_scheme=None):
 
     return lut[fac]
 
-def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, output_dir, show_cores= False):
+def one_hot_encode_3d(fac, categories=[1, 7, 8], channel_first=True):
+    """
+    Converts a 3D categorical array into a 4D one-hot encoded array.
+    
+    Args:
+        fac (numpy.ndarray): 3D array of grouped facies.
+        categories (list): The specific integer values to encode. 
+                           Default matches the 1, 7, 8 from groupFacies.
+        channel_first (bool): If True, returns shape (Channels, Z, Y, X) for PyTorch.
+                              If False, returns shape (Z, Y, X, Channels) for TensorFlow.
+    """
+    # This creates a boolean array by checking fac against each category, 
+    # then converts True/False to 1/0 (uint8 to save memory)
+    one_hot = (fac[..., None] == categories).astype(np.uint8)
+    
+    if channel_first:
+        # Move the newly created channel dimension from the end to the front
+        one_hot = np.moveaxis(one_hot, -1, 0)
+        
+    return one_hot
+
+def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, output_dir, show_cores= False, apply_one_hot=False):
     """
     Worker function for generating each sample.
 
@@ -91,6 +112,13 @@ def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, 
         
         fac, grain, age = flsim.getBlock(dz=sim_params['vertical_resolution'], zb=0, nz=grid_params['nz'])
         fac = groupFacies(fac)
+
+        # Apply one-hot encoding if requested
+        if apply_one_hot:
+            # Assuming you are using PyTorch based on our previous conversation, 
+            # we keep channel_first=True
+            fac = one_hot_encode_3d(fac, categories=[1, 7, 8], channel_first=True)
+            
         manager.save_to_batch(h5_path, index=i, fac=fac, grain=grain, age=age)
         
     return h5_path

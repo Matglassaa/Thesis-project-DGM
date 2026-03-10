@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd 
 import stat
 import time
+from joblib import Parallel, delayed
 
 def groupFacies(fac, grouping_scheme=None):
     """
@@ -88,7 +89,7 @@ def worker_flumy_8501(sim_id, base_seed, output_dir, temp_dir):
     with open(param_file, 'w') as f:
         f.writelines([
                     '[GLOBAL]\n',
-                    'VERBOSE = 1\n',
+                    'VERBOSE = 0\n',
                     'F2G_FACIES = 1\n',
                     'F2G_DZ = 0.5\n',             # Reduced from 5 to 0.5 to capture 5m deep channels accurately
                     'F2G_FILE = ' + out_f2g + '\n', 
@@ -136,7 +137,6 @@ def worker_flumy_8501(sim_id, base_seed, output_dir, temp_dir):
     print("Simulation finished in --- %s minutes ---" % (np.round((time.time() - start_time)/60,2)))
 
     # 4. POST-PROCESS
-    # 4. POST-PROCESS
     try:
         if os.path.exists(out_f2g):
             # 1. Read the file, skipping the header lines robustly
@@ -182,48 +182,53 @@ def worker_flumy_8501(sim_id, base_seed, output_dir, temp_dir):
 
 if __name__ == "__main__":
     # 1. Define your test parameters
+    N_JOBS = 12  # As requested, spawn two parallel processes
     test_base_seed = 42
-    test_sim_id = 1
-    
+
     # 2. Define where you want the temporary and final files to go
-    base_path = os.path.join(os.getcwd(),'data')
-    output_directory = os.path.join(base_path,"test_outputs")
-    temp_directory = os.path.join(base_path,"test_temp")
-    
+    base_path = os.path.join(os.getcwd(), 'data')
+    output_directory = os.path.join(base_path, "test_outputs_parallel")
+    temp_directory = os.path.join(base_path, "test_temp_parallel")
+
     # Create the directories if they don't exist yet
     os.makedirs(output_directory, exist_ok=True)
     os.makedirs(temp_directory, exist_ok=True)
-    
-    # 3. Call the worker function to run the simulation
-    print(f"Launching FLUMY test run (Seed: {test_base_seed + test_sim_id})...")
-    
-    success = worker_flumy_8501(
-        sim_id=test_sim_id, 
-        base_seed=test_base_seed, 
-        output_dir=output_directory, 
-        temp_dir=temp_directory
-    )
-    
-    # 4. Verify the results
-    if success:
-        print("\n✅ Simulation completed successfully!")
-        
-        # Check if the generated .npz file exists
-        expected_npz_path = os.path.join(output_directory, f"sample_{test_base_seed + test_sim_id}.npz")
-        
-        if os.path.exists(expected_npz_path):
-            print(f"Loading generated file: {expected_npz_path}")
-            
-            # Load the compressed data to verify it worked
-            data = np.load(expected_npz_path)
-            facies_tensor = data['facies']
-            
-            print("\n--- Tensor Verification ---")
-            print(f"Tensor Shape: {facies_tensor.shape}") 
-            print(f"Data Type: {facies_tensor.dtype}")
-            print(f"Unique Values: {np.unique(facies_tensor)}")
-            
-        else:
-            print("❌ Error: The worker reported success, but the .npz file is missing.")
+
+    # 3. Create a list of jobs for joblib
+    print(f"Setting up {N_JOBS} parallel FLUMY runs...")
+    jobs = []
+    for i in range(N_JOBS):
+        sim_id = i + 1  # Use 1, 2, ... for sim_id
+        jobs.append(
+            delayed(worker_flumy_8501)(
+                sim_id=sim_id,
+                base_seed=test_base_seed,
+                output_dir=output_directory,
+                temp_dir=temp_directory
+            )
+        )
+
+    # 4. Run the jobs in parallel
+    print(f"Launching {N_JOBS} jobs in parallel...")
+    start_time_parallel = time.time()
+
+    results = Parallel(n_jobs=N_JOBS, verbose=5)(jobs)
+
+    print(f"\nParallel execution finished in --- {np.round((time.time() - start_time_parallel) / 60, 2)} minutes ---")
+
+    # 5. Verify the results
+    print("\n--- Job Results ---")
+    successful_runs = sum(1 for r in results if r is True)
+    print(f"Total successful runs: {successful_runs}/{N_JOBS}")
+
+    if successful_runs > 0:
+        print("\nVerifying output files...")
+        for i in range(N_JOBS):
+            sim_id = i + 1
+            expected_npz_path = os.path.join(output_directory, f"sample_{test_base_seed + sim_id}.npz")
+            if os.path.exists(expected_npz_path):
+                print(f"✅ Found output for sim_id {sim_id}: {expected_npz_path}")
+            else:
+                print(f"❌ Missing output for sim_id {sim_id}")
     else:
-        print("\n❌ Simulation failed. Check your FLUMY path and parameters.")
+        print("\nNo simulations completed successfully.")

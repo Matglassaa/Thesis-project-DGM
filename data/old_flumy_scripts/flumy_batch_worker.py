@@ -98,27 +98,34 @@ def worker_flumy_8501(sim_id, base_seed, output_dir, temp_dir):
                     # --- Grid Parameters ---
                     'DOMAIN_NX = 128\n',
                     'DOMAIN_NY = 128\n',
-                    'DOMAIN_DX = 40\n',
-                    'DOMAIN_DY = 40\n',
-                    'ZUL_TOPO = 70\n',             # Reduced from 100 to 60 to focus on the top 60m where channels are present
+                    'DOMAIN_DX = 20\n',
+                    'DOMAIN_DY = 20\n',
+                    'ZUL_TOPO = 64\n',             
                     'ZUL_TYPE = 1\n',
+
+                    # --- Channel Geometry Constraints ---
+                    'CHNL_WIDTH = 60\n',           # Channel width matching the 400m sand body with
+                    'CHNL_MAX_DEPTH = 3\n',         # Depth matching the max 10m sand body depth
+                    'CHNL_WAVELENGTH = 600\n',     # 
+
+                    # --- Avulsion Controls ---
+                    'AV_REG_FREQ  = 2\n',          # Poissin dist
+                    'AV_REG_POISSON = 800\n',    # Mean time between avulsions (in time steps) for the Poisson distribution -> higher period means fewer avulsions
+                    'AV_LOC_FREQ = 2\n',
+                    'AV_LOC_POISSON = 500\n',    # Mean time between avulsion location changes (in time steps) for the Poisson distribution -> higher period means more stable channel locations
+                    'AV_LV_OB = 1\n',            # Levee breaches during aggradation
                     
-                    # --- Geometry Constraints ---
-                    'CHNL_WIDTH = 99\n',        # Your preferred width
-                    'CHNL_MAX_DEPTH = 5\n',      # Your preferred depth
-                    'CHNL_WAVELENGTH = 1900\n',     
-                    
-                    # --- NTG Control (80% Sand) ---
-                    'AG_TYPE = 2\n',             
-                    'AG_OB_FREQ = 2\n',
-                    'AG_OB_PERIOD = 100\n',         
-                    'AG_OB_MIN = 0.75\n',
-                    'AG_OB_NORM_MEAN = 0.8\n' 
-                    'AG_OB_MAX = 0.85\n',         # This acts as your NTG target in this mode
+                    # --- Aggradation controls ---
+                    'AG_TYPE = 2\n',                  ##Type 2: Overbank Flow            
+                    'AG_OB_FREQ = 2\n',                 ## Poisson distribution of the frequency of aggradation -> randomly spaced
+                    'AG_OB_POISSON= 500\n',              ## Mean time between aggradation events (in time steps) for the Poisson distribution -> higher period means higher NTG
+                    'AG_OB_DIST = 3\n',                 ## Specifying that the aggradation values follow a lognormal distribution.
+                    'AG_OB_LOGNORM_MEAN = 0.05\n' 
+                    'AG_OB_LOGNORM_STDEV = 0.01\n',         
                     
                     # --- Other Logic ---
-                    'CHNL_FLW_DIR = 210\n',
-                    'LAUNCH_IT = -1\n'           # Run until AG_OB_MAX is reached
+                    #'CHNL_FLW_DIR = \n',
+                    'LAUNCH_IT = -1\n'           # Run until ZUL_TOPO is reached
                 ])
 
     # 3. RUN BATCH
@@ -148,7 +155,7 @@ def worker_flumy_8501(sim_id, base_seed, output_dir, temp_dir):
             facies_1d = np.clip(raw_col, 0, 255).astype(np.int32)   # Safe to cast now!
             
             # 3. Calculate dimensions
-            nx, ny, nz_target = 128, 128, 128
+            nx, ny, nz_target = 128, 128, 64
             total_valid_cells = (len(facies_1d) // (nx * ny)) * (nx * ny)
             clean_facies_1d = facies_1d[:total_valid_cells]
             

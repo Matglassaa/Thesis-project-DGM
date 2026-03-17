@@ -1,118 +1,53 @@
 import os
-import h5py
 import numpy as np
-from joblib import Parallel, delayed, effective_n_jobs
 
-class FlumyDataManager:
+try:
+    import h5py
+    H5PY_AVAILABLE = True
+except ImportError:
+    H5PY_AVAILABLE = False
+
+def groupFacies(fac, grouping_scheme=None):
     """
-    Manages the creation of HDF5 files for 3D geological data
+    Groups facies produced by the flumy simulation.
+    Default scheme maps into FA1 (1), FA2 (7), and FA3 (8).
     """
-    def __init__(self, output_dir : str="datasets/training"):
-        """
-        Args:
-            output_dit (str): sets output directory for training, validation and testing data. defaults is "datasets/training"
-        """
-        self.output_dir = output_dir
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+    fac_int = fac.astype(np.int32)
+    lut = np.zeros(256, dtype=np.uint8)
 
-    def initialize_h5_file(self, batch_id, n_samples, nx, ny, nz):
-        """
-        Pre-allocates an HDF5 file with gzip compression for a specific batch.
-        
-        Args:
-            batch_id (int): Unique identifier for this batch (used for naming).
-            n_samples (int): Number of realizations this file will hold.
-            nx (int): Grid size in the X direction.
-            ny (int): Grid size in the Y direction.
-            nz (int): Grid size in the Z (depth) direction.
-            
-        Returns:
-            str: The absolute or relative path to the created HDF5 file.
-        """
-        filename = f"flumy_batch_{batch_id:04d}.h5"
-        file_path = os.path.join(self.output_dir, filename)
-        
-        with h5py.File(file_path, 'w') as f:
-            chunks = (1, nx, ny, nz)
-            f.create_dataset("facies", (n_samples, nx, ny, nz), dtype='u1', compression="gzip", chunks=chunks)
-            f.create_dataset("grain", (n_samples, nx, ny, nz), dtype='f4', compression="gzip", chunks=chunks)
-            f.create_dataset("age", (n_samples, nx, ny, nz), dtype='i4', compression="gzip", chunks=chunks)
-            
-            f.attrs['n_samples'] = n_samples
-            f.attrs['batch_id'] = batch_id
-        
-        return file_path
+    if grouping_scheme is None:
+        lut[0:4] = 1       # FA1: Fluvial and distributary channel deposits 
+        lut[4:8] = 7       # FA2: Crevasse splays and levee deposits
+        lut[8:13] = 8      # FA3: Overbank deposists and paleosols
+    else:
+        for new_val, old_vals in grouping_scheme.items():
+            lut[list(old_vals)] = new_val
 
-    def save_to_batch(self, file_path, index, fac, grain, age):
-        """
-        Writes a single 3D realization into a specific index slot of an existing HDF5 file.
-        
-        Args:
-            file_path (str): Path to the target HDF5 file.
-            index (int): The slot index (0 to n_samples-1) to save the data into.
-            fac (np.ndarray): 3D array representing facies.
-            grain (np.ndarray): 3D array representing grain size.
-            age (np.ndarray): 3D array representing geological age.
-        """
-        with h5py.File(file_path, 'a') as f:
-            f['facies'][index, ...] = fac.astype(np.uint8)
-            f['grain'][index, ...] = grain.astype(np.float32)
-            f['age'][index, ...] = age.astype(np.int32)
+    return lut[fac_int]
 
-class BatchSimulator:
-    """
-    Orchestrates the parallel execution of simulation tasks across multiple CPU cores.
-    """
-    def __init__(self, worker_function, total_samples, batch_size, grid_params, sim_params, output_dir, n_jobs=-1):
-        """
-        Args:
-            worker_function (Callable): The function executed by each parallel worker.
-            total_samples (int): The total number of simulations to generate.
-            batch_size (int): The number of simulations to group into a single HDF5 file.
-            grid_params (dict): Dimensions and resolution of the 3D grid.
-            sim_params (dict): Physical simulation parameters (seed, depths, etc.).
-            output_dir (str): Destination directory for the output data.
-            n_jobs (int): Number of CPU cores to utilize. Defaults to -1 (all available).
-        """
-        self.worker = worker_function
-        self.total_samples = total_samples
-        self.batch_size = batch_size
-        self.grid_params = grid_params
-        self.sim_params = sim_params
-        self.output_dir = output_dir
-        self.n_jobs = n_jobs
-        
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+def save_as_npz(data_dict, filepath):
+    if not filepath.endswith('.npz'):
+        filepath += '.npz'
+    np.savez_compressed(filepath, **data_dict)
+    return filepath
 
-    def run(self):
-        """
-        Calculates the required number of batches and dispatches jobs to the parallel backend.
-        
-        Returns:
-            List[str]: A list of file paths to the generated HDF5 batch files.
-        """
-        n_cores_active = effective_n_jobs(self.n_jobs)
-        n_batches = int(np.ceil(self.total_samples / self.batch_size))
+def save_as_h5(data_dict, filepath):
+    if not H5PY_AVAILABLE:
+        raise ImportError("h5py library required to save as .h5.")
+    if not filepath.endswith(('.h5', '.hdf5')):
+        filepath += '.h5'
+    with h5py.File(filepath, 'w') as hf:
+        for key, value in data_dict.items():
+            hf.create_dataset(key, data=value)
+    return filepath
 
-        jobs = []
-        for i in range(n_batches):
-            batch_id = i
-            current_batch_size = min(
-                self.batch_size, 
-                self.total_samples - (batch_id * self.batch_size)
-            )
-            
-            jobs.append(
-                delayed(self.worker)(
-                    batch_id, 
-                    current_batch_size, 
-                    self.grid_params, 
-                    self.sim_params, 
-                    self.output_dir
-                )
-            )
+def save_sample(data_dict, output_dir, sample_name, save_format='npz'):
+    os.makedirs(output_dir, exist_ok=True)
+    base_filepath = os.path.join(output_dir, sample_name)
 
-        results = Parallel(n_jobs=self.n_jobs, verbose=5)(jobs)
-        return results
+    if save_format == 'npz':
+        return save_as_npz(data_dict, base_filepath)
+    elif save_format in ['h5', 'hdf5']:
+        return save_as_h5(data_dict, base_filepath)
+    else:
+        raise ValueError("Unsupported save format. Use 'npz' or 'h5'.")

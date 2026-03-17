@@ -1,124 +1,98 @@
 import os
+import subprocess
+import time
 import numpy as np
-from flumy import Flumy
-from flumy_utils import FlumyDataManager
+import pandas as pd
+from flumy_utils import groupFacies, save_sample
 
-def groupFacies(fac, grouping_scheme=None):
-    """
-    Function to group all facies produced by the flumy simulation into three main categories: FA1, FA2 and FA3.
-    - FA1: Fluvial and distributary channel deposits
-    - FA2: Crevasse splays and levee deposits
-    - FA3: Overbank deposists and paleosols
-
-    ### Args:
-        fac (numpy array): 3D array of facies produced by the flumy simulation:
-        n_groups (int, optional): Number of groups to create. Defaults to 3.
-        grouping_scheme (list or dict, optional): Scheme to use for grouping the facies. If None, the default scheme is used. Defaults to None.
-
-    ### Returns:
-        fac_grouped (numpy array): 3D array of grouped facies
-
-    ### Examples:
-        **Example 1:** Using the default grouping scheme
-            - 0:4 -> 1 (FA1: Fluvial and distributary channel deposits)
-            - 4:8 -> 7 (FA2: Crevasse splays and levee deposits)
-            - 8:13 -> 8 (FA3: Overbank deposists and paleosls)
-
+def run_flumy_worker(sim_id, base_seed, flumy_exe_dir, output_dir, temp_dir, save_format='npz', **flumy_params):
+    unique_seed = base_seed + sim_id
+    
+    # Define file paths safely
+    param_file = os.path.join(temp_dir, f"params_{unique_seed}.bat").replace('\\', '/')
+    out_f2g = os.path.join(temp_dir, f"out_{unique_seed}.f2g").replace('\\', '/')
+    sample_name = f"sample_{unique_seed}"
+    
+    # 1. WRITE BATCH FILE DYNAMICALLY
+    # We take the base parameters and inject the ones passed from main()
+    print(f'[{unique_seed}] Writing batch file: {param_file}')
+    
+    batch_lines = [
+        '[GLOBAL]\n',
+        'VERBOSE = 0\n',
+        'F2G_FACIES = 1\n',
+        f"F2G_DZ = {flumy_params.get('F2G_DZ', 0.5)}\n",
+        f"F2G_FILE = {out_f2g}\n",
+        '[NEW_SEQ]\n',
+        f"SIM_SEED = {unique_seed}\n",
+    ]
+    
+    # Append all other flumy parameters dynamically
+    exclude_keys = ['F2G_DZ'] # already handled above
+    for key, value in flumy_params.items():
+        if key not in exclude_keys:
+            batch_lines.append(f"{key} = {value}\n")
             
-        **Example 2:** Using a custom grouping scheme
-            - grouping_scheme = {1: [1], 2: [2,3,4], 7: [5,6,7], 8: [8,9,10,11,12,13]}
-            - 1 -> (FA1: Channel Lag)
-            - 2:4 -> (FA1: Channel Fill)
-            - 5:7 -> (FA2: Crevasse splays and levee deposits)
-            - 8:13 -> (FA3: Overbank deposists and paleosls)
-    """
-    lut = np.zeros(256, dtype=np.uint8)
+    with open(param_file, 'w') as f:
+        f.writelines(batch_lines)
 
-    if grouping_scheme is None:
-        # DEFAULT SCHEME
-        lut[0:4] = 1       # FA1: Fluvial and distributary channel deposits 
-        lut[4:8] = 7       # FA2: Crevasse splays and levee deposits
-        lut[8:13] = 8      # FA3: Overbank deposists and paleosols
-        
-    else:
-        # CUSTOM SCHEME
-        # e.g., grouping_scheme = {1: [0,1,2,3], 7: [4,5,6,7], 8: [8,9,10,11,12,13]}
-        for new_val, old_vals in grouping_scheme.items():
-            # Convert old_vals to a list to use as indices
-            lut[list(old_vals)] = new_val
-
-    return lut[fac]
-
-def one_hot_encode_3d(fac, categories=[1, 7, 8], channel_first=True):
-    """
-    Converts a 3D categorical array into a 4D one-hot encoded array.
+    # 2. RUN FLUMY
+    original_cwd = os.getcwd()
+    os.chdir(flumy_exe_dir)
+    command_text = f'flumy -b="{param_file}"'
     
-    Args:
-        fac (numpy.ndarray): 3D array of grouped facies.
-        categories (list): The specific integer values to encode. 
-                           Default matches the 1, 7, 8 from groupFacies.
-        channel_first (bool): If True, returns shape (Channels, Z, Y, X) for PyTorch.
-                              If False, returns shape (Z, Y, X, Channels) for TensorFlow.
-    """
-    # This creates a boolean array by checking fac against each category, 
-    # then converts True/False to 1/0 (uint8 to save memory)
-    one_hot = (fac[..., None] == categories).astype(np.uint8)
+    print(f'[{unique_seed}] Running: {command_text}')
+    start_time = time.time()
     
-    if channel_first:
-        # Move the newly created channel dimension from the end to the front
-        one_hot = np.moveaxis(one_hot, -1, 0)
-        
-    return one_hot
-
-def run_simulation_batch(batch_id, n_samples_in_batch, grid_params, sim_params, output_dir, show_cores= False, apply_one_hot=False):
-    """
-    Worker function for generating each sample.
-
-    Args:
-        batch_id (int): Unique identifier for the batch.
-        n_samples_in_batch (int): Number of samples to generate in this batch.
-        grid_params (dict): Dictionary containing grid parameters (nx, ny, mesh, nz).
-        sim_params (dict): Dictionary containing simulation parameters (base_seed, max_channel_depth, etc.).
-        output_dir (str): Directory where the output HDF5 file will be saved.
-    """
-    manager = FlumyDataManager(output_dir=output_dir)
-
-    if show_cores:
-        pid = os.getpid()
-        print(f"--> Batch {batch_id} is running on Core ID: {pid}")
+    proc = subprocess.Popen(command_text, shell=True)
+    proc.wait()
     
-    h5_path = manager.initialize_h5_file(
-        batch_id, 
-        n_samples_in_batch, 
-        grid_params['nx'], 
-        grid_params['ny'], 
-        grid_params['nz']
-    )
-    
-    for i in range(n_samples_in_batch):
-        flsim = Flumy(grid_params['nx'], grid_params['ny'], grid_params['mesh'], verbose=False)
-        
-        unique_seed = sim_params['base_seed'] + (batch_id * 10000) + i
-        
-        flsim.launch(
-            unique_seed, 
-            hmax=sim_params['max_channel_depth'], 
-            isbx=sim_params['max_sand_body_extention'], 
-            ng=sim_params['net_gross'], 
-            zul=sim_params['target_height'], 
-            niter=sim_params['niter'],
-            lvb=sim_params['levee_break']
-        )
-        
-        fac, grain, age = flsim.getBlock(dz=sim_params['vertical_resolution'], zb=0, nz=grid_params['nz'])
-        fac = groupFacies(fac)
+    os.chdir(original_cwd) # Revert working directory
+    print(f"[{unique_seed}] Simulation finished in {np.round((time.time() - start_time)/60,2)} minutes.")
 
-        # Apply one-hot encoding if requested
-        if apply_one_hot:
-            # Assuming you are using PyTorch based on our previous conversation, 
-            # we keep channel_first=True
-            fac = one_hot_encode_3d(fac, categories=[1, 7, 8], channel_first=True)
+    # 3. POST-PROCESS
+    try:
+        if os.path.exists(out_f2g):
+            # Parse F2G file
+            df = pd.read_csv(out_f2g, sep=r'\s+', comment='F', header=None)
             
-        manager.save_to_batch(h5_path, index=i, fac=fac, grain=grain, age=age)
-        
-    return h5_path
+            # Bulletproof casting
+            raw_col = pd.to_numeric(df.iloc[:, 0], errors='coerce') 
+            raw_col = raw_col.fillna(0).values 
+            facies_1d = np.clip(raw_col, 0, 255).astype(np.int32)
+            
+            # Dimensions setup (pulled from flumy_params)
+            nx = flumy_params.get('DOMAIN_NX', 128)
+            ny = flumy_params.get('DOMAIN_NY', 128)
+            nz_target = flumy_params.get('ZUL_TOPO', 64) 
+            
+            total_valid_cells = (len(facies_1d) // (nx * ny)) * (nx * ny)
+            clean_facies_1d = facies_1d[:total_valid_cells]
+            
+            # Reshape
+            actual_nz = total_valid_cells // (nx * ny)
+            facies_3d_temp = clean_facies_1d.reshape((actual_nz, ny, nx))
+            
+            # Crop to target Z
+            facies_3d = facies_3d_temp[:nz_target, :, :] 
+            
+            # Group facies (One-hot encoding is DISABLED here as requested)
+            facies_grouped = groupFacies(facies_3d)
+            
+            # Save data
+            data_dict = {'facies': facies_grouped}
+            saved_file = save_sample(data_dict, output_dir, sample_name, save_format)
+            
+            print(f"✅ [{unique_seed}] Saved training sample: {saved_file}")
+            
+            # Cleanup temp files
+            os.remove(param_file)
+            os.remove(out_f2g)
+            return True
+        else:
+            print(f"❌ [{unique_seed}] Error: {out_f2g} was not created.")
+            return False
+            
+    except Exception as e:
+        print(f"❌ [{unique_seed}] Processing Error: {e}")
+        return False

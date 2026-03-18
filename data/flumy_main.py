@@ -4,13 +4,24 @@ from joblib import Parallel, delayed
 from flumy_worker import run_flumy_worker
 
 def main():
-    FLUMY_EXE_DIR = r"C:\Users\mathi\Downloads\flumy_8.501_win64\bin"
+    FLUMY_EXE_DIR_WINDWOWS = r"C:\Users\mathi\Downloads\flumy_8.501_win64\bin"
+    FLUMY_EXE_DIR_LINUX = os.path.expanduser("~/software/flumy/bin")
+
+    if os.name == 'nt':  # Windows
+        FLUMY_EXE_DIR = FLUMY_EXE_DIR_WINDWOWS
+    else:  # Linux
+        FLUMY_EXE_DIR = FLUMY_EXE_DIR_LINUX
     
-    BASE_PATH = os.path.join(os.getcwd(), 'data')
+    # BASE_PATH = os.path.join(os.getcwd(), 'data')
+    # OUTPUT_DIR = os.path.join(BASE_PATH, "test_outputs")
+    # TEMP_DIR = os.path.join(BASE_PATH, "test_temp")
+
+    # This guarantees the data ALWAYS goes to exactly ~/data/flumy_run regardless of where you run the script
+    BASE_PATH = os.path.expanduser("~/data/flumy_run")
     OUTPUT_DIR = os.path.join(BASE_PATH, "test_outputs")
     TEMP_DIR = os.path.join(BASE_PATH, "test_temp")
     
-    NUM_SAMPLES = 5
+    NUM_SAMPLES = 500
     BASE_SEED = 42
     
     # Execution options
@@ -19,6 +30,7 @@ def main():
     SAVE_FORMAT = 'npz' # change to 'h5' if needed
     
     FLUMY_PARAMS = {
+        #'VERBOSE': 1,
         'F2G_DZ': 0.5,
         'DOMAIN_NX': 128,
         'DOMAIN_NY': 128,
@@ -27,8 +39,8 @@ def main():
         'ZUL_TOPO': 64,
         'ZUL_TYPE': 1,
         'CHNL_WIDTH': 60,
-        'CHNL_MAX_DEPTH': 3,
-        'CHNL_WAVELENGTH': 600,
+        'CHNL_MAX_DEPTH': 6,
+        'CHNL_WAVELENGTH': 1000,
         'AV_REG_FREQ': 2,
         'AV_REG_POISSON': 800,
         'AV_LOC_FREQ': 2,

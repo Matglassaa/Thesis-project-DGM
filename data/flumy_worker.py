@@ -19,9 +19,9 @@ def run_flumy_worker(sim_id, base_seed, flumy_exe_dir, output_dir, temp_dir, sav
     
     batch_lines = [
         '[GLOBAL]\n',
-        'VERBOSE = 0\n',
+        f"VERBOSE = {flumy_params.get('VERBOSE',0)}\n",
         'F2G_FACIES = 1\n',
-        f"F2G_DZ = {flumy_params.get('F2G_DZ', 0.5)}\n",
+        f"F2G_DZ = {flumy_params.get('F2G_DZ',0.5)}\n",
         f"F2G_FILE = {out_f2g}\n",
         '[NEW_SEQ]\n',
         f"SIM_SEED = {unique_seed}\n",
@@ -39,11 +39,19 @@ def run_flumy_worker(sim_id, base_seed, flumy_exe_dir, output_dir, temp_dir, sav
     # 2. RUN FLUMY
     original_cwd = os.getcwd()
     os.chdir(flumy_exe_dir)
-    command_text = f'flumy -b="{param_file}"'
+    
+    # OS-specific executable call
+    if os.name == 'nt':
+        exe_cmd = "flumy" # or "flumy.exe", Windows doesn't mind
+    else:
+        exe_cmd = "./flumy" # The critical Linux prefix
+        
+    command_text = f'{exe_cmd} -b="{param_file}"'
     
     print(f'[{unique_seed}] Running: {command_text}')
     start_time = time.time()
     
+    # Using shell=True is generally okay here, but ensure paths with spaces are quoted if needed
     proc = subprocess.Popen(command_text, shell=True)
     proc.wait()
     
@@ -77,22 +85,22 @@ def run_flumy_worker(sim_id, base_seed, flumy_exe_dir, output_dir, temp_dir, sav
             facies_3d = facies_3d_temp[:nz_target, :, :] 
             
             # Group facies (One-hot encoding is DISABLED here as requested)
-            facies_grouped = groupFacies(facies_3d)
+            facies_grouped = facies_3d#groupFacies(facies_3d)
             
             # Save data
             data_dict = {'facies': facies_grouped}
             saved_file = save_sample(data_dict, output_dir, sample_name, save_format)
             
-            print(f"✅ [{unique_seed}] Saved training sample: {saved_file}")
+            print(f"[{unique_seed}] Saved training sample: {saved_file}")
             
             # Cleanup temp files
             os.remove(param_file)
             os.remove(out_f2g)
             return True
         else:
-            print(f"❌ [{unique_seed}] Error: {out_f2g} was not created.")
+            print(f"[{unique_seed}] Error: {out_f2g} was not created.")
             return False
             
     except Exception as e:
-        print(f"❌ [{unique_seed}] Processing Error: {e}")
+        print(f"[{unique_seed}] Processing Error: {e}")
         return False

@@ -5,7 +5,22 @@ import numpy as np
 import pandas as pd
 from flumy_utils import groupFacies, save_sample
 
-def run_flumy_worker(sim_id, base_seed, flumy_exe_dir, output_dir, temp_dir, save_format='npz', **flumy_params):
+def run_flumy_worker(sim_id:int, base_seed:int, flumy_exe_dir, output_dir, temp_dir, save_format='npz', **flumy_params):
+    '''
+    Worker function ro run  single flumy simulation, optionally post-processing the output and saving it to the dedicated output dir.
+
+    Parameters:
+    - sim_id: Unique identifier for the simulation combined with base_seed.
+    - base_seed: Manually defined base seed to ensure reproducibility. Final seed: `unique_seed =  base_seed + sim_id`.
+    - flumy_exe_dir: Directory where the flumy application is located.
+    - output_dir: Output directory for `.npz` files.
+    - temp_dir: Temporary dirctory to store the `.f2g` and `.bat` files.
+    - save_format: 'npz' (default) or 'h5' for output format.
+    - flumy_params: Additional parameters to be passed to the batch file, such as DOMAIN_NX, DOMAIN_NY, etc.
+
+    Returns:
+    - A 4D numpy array o
+    '''
     unique_seed = base_seed + sim_id
     
     # Define file paths safely
@@ -19,7 +34,7 @@ def run_flumy_worker(sim_id, base_seed, flumy_exe_dir, output_dir, temp_dir, sav
     
     batch_lines = [
         '[GLOBAL]\n',
-        f"VERBOSE = {flumy_params.get('VERBOSE',0)}\n",
+        f"VERBOSE = 1\n",
         'F2G_FACIES = 1\n',
         f"F2G_DZ = {flumy_params.get('F2G_DZ',0.5)}\n",
         f"F2G_FILE = {out_f2g}\n",

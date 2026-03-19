@@ -16,9 +16,9 @@ def groupFacies(fac, grouping_scheme=None):
     lut = np.zeros(256, dtype=np.uint8)
 
     if grouping_scheme is None:
-        lut[0:4] = 1       # FA1: Fluvial and distributary channel deposits 
-        lut[4:8] = 7       # FA2: Crevasse splays and levee deposits
-        lut[8:13] = 8      # FA3: Overbank deposists and paleosols
+        lut[0:4] = 1       # FA1: Fluvial and distributary channel deposits -> fac 0,1,2 & 3
+        lut[4:8] = 7       # FA2: Crevasse splays and levee deposits -> fac 4,5,6 & 7
+        lut[8:13] = 8      # FA3: Overbank deposists and paleosols -> fac 8,9 -> rest does not occur often 
     else:
         for new_val, old_vals in grouping_scheme.items():
             lut[list(old_vals)] = new_val

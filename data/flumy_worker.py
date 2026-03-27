@@ -5,117 +5,157 @@ import numpy as np
 import pandas as pd
 from flumy_utils import groupFacies, save_sample
 
-def run_flumy_worker(sim_id:int, base_seed:int, flumy_exe_dir, output_dir, temp_dir, save_format='npz', **flumy_params):
-    '''
-    Worker function ro run  single flumy simulation, optionally post-processing the output and saving it to the dedicated output dir.
 
+def batch_writer(param_file, out_f2g, unique_seed, **flumy_params):
+    """
+    Generates the .bat configuration file for the Flumy executable.
+    
     Parameters:
-    - sim_id: Unique identifier for the simulation combined with base_seed.
-    - base_seed: Manually defined base seed to ensure reproducibility. Final seed: `unique_seed =  base_seed + sim_id`.
-    - flumy_exe_dir: Directory where the flumy application is located.
-    - output_dir: Output directory for `.npz` files.
-    - temp_dir: Temporary dirctory to store the `.f2g` and `.bat` files.
-    - save_format: 'npz' (default) or 'h5' for output format.
-    - flumy_params: Additional parameters to be passed to the batch file, such as DOMAIN_NX, DOMAIN_NY, etc.
-
+    - param_file (str): The pth to the .bat file.
+    - out_f2g (str): The path to the output .f2g file.
+    - unique_seed (int): A unique seed to ensure reproducibility.
+    
     Returns:
-    - A 4D numpy array o
-    '''
-    unique_seed = base_seed + sim_id
-    
-    # Define file paths safely
-    param_file = os.path.join(temp_dir, f"params_{unique_seed}.bat").replace('\\', '/')
-    out_f2g = os.path.join(temp_dir, f"out_{unique_seed}.f2g").replace('\\', '/')
-    sample_name = f"sample_{unique_seed}"
-    
-    # 1. WRITE BATCH FILE DYNAMICALLY
-    # We take the base parameters and inject the ones passed from main()
-    print(f'[{unique_seed}] Writing batch file: {param_file}')
-    
+    - None
+    """
+    # 1. Create intial layout of .bat file in list format
     batch_lines = [
-        '[GLOBAL]\n',
-        f"VERBOSE = 1\n",
-        'F2G_FACIES = 1\n',
-        f"F2G_DZ = {flumy_params.get('F2G_DZ',0.5)}\n",
+        '[GLOBAL]\n', f"VERBOSE = 0\n", 'F2G_FACIES = 1\n',
+        f"F2G_DZ = {flumy_params.get('F2G_DZ')}\n",
         f"F2G_FILE = {out_f2g}\n",
-        '[NEW_SEQ]\n',
-        f"SIM_SEED = {unique_seed}\n",
+        '[NEW_SEQ]\n', f"SIM_SEED = {unique_seed}\n",
     ]
-    
-    # Append all other flumy parameters dynamically
-    exclude_keys = ['F2G_DZ'] # already handled above
+
+    exclude_keys = ['F2G_DZ']       # Make sure to exclude F2G_DZ as this param was already defined above
+
+    # 2. Loop over all parameters ni `flumy_params` and add them to batch_lines file
     for key, value in flumy_params.items():
         if key not in exclude_keys:
             batch_lines.append(f"{key} = {value}\n")
-            
+
+    # 3. Write .bat file using batch_lines list        
     with open(param_file, 'w') as f:
         f.writelines(batch_lines)
 
-    # 2. RUN FLUMY
-    original_cwd = os.getcwd()
-    os.chdir(flumy_exe_dir)
-    
-    # OS-specific executable call
-    if os.name == 'nt':
-        exe_cmd = "flumy" # or "flumy.exe", Windows doesn't mind
-    else:
-        exe_cmd = "./flumy" # The critical Linux prefix
-        
-    command_text = f'{exe_cmd} -b="{param_file}"'
-    
-    print(f'[{unique_seed}] Running: {command_text}')
-    start_time = time.time()
-    
-    # Using shell=True is generally okay here, but ensure paths with spaces are quoted if needed
-    proc = subprocess.Popen(command_text, shell=True)
-    proc.wait()
-    
-    os.chdir(original_cwd) # Revert working directory
-    print(f"[{unique_seed}] Simulation finished in {np.round((time.time() - start_time)/60,2)} minutes.")
 
-    # 3. POST-PROCESS
+def run_flumy_executable(flumy_exe_dir, param_file, unique_seed):
+    """
+    Handles the subprocess call and directory switching.
+    
+    Parameters:
+    - flumy_exe_dir (str): The path to the flumy executable directory.
+    - param_file (str): The pth to the .bat file.
+    - unique_seed (int): A unique seed to ensure reproducibility.
+
+    Returns:
+    - None
+    """
+    # 1. Save currect working directory and save as variable
+    original_cwd = os.getcwd()
+
+    # 2. 'Try' block for running the Flumy excecutable 
     try:
-        if os.path.exists(out_f2g):
-            # Parse F2G file
-            df = pd.read_csv(out_f2g, sep=r'\s+', comment='F', header=None)
-            
-            # Bulletproof casting
-            raw_col = pd.to_numeric(df.iloc[:, 0], errors='coerce') 
-            raw_col = raw_col.fillna(0).values 
-            facies_1d = np.clip(raw_col, 0, 255).astype(np.int32)
-            
-            # Dimensions setup (pulled from flumy_params)
-            nx = flumy_params.get('DOMAIN_NX', 128)
-            ny = flumy_params.get('DOMAIN_NY', 128)
-            nz_target = flumy_params.get('ZUL_TOPO', 64) 
-            
-            total_valid_cells = (len(facies_1d) // (nx * ny)) * (nx * ny)
-            clean_facies_1d = facies_1d[:total_valid_cells]
-            
-            # Reshape
-            actual_nz = total_valid_cells // (nx * ny)
-            facies_3d_temp = clean_facies_1d.reshape((actual_nz, ny, nx))
-            
-            # Crop to target Z
-            facies_3d = facies_3d_temp[:nz_target, :, :] 
-            
-            # Group facies (One-hot encoding is DISABLED here as requested)
-            facies_grouped = facies_3d#groupFacies(facies_3d)
-            
-            # Save data
-            data_dict = {'facies': facies_grouped}
-            saved_file = save_sample(data_dict, output_dir, sample_name, save_format)
-            
-            print(f"[{unique_seed}] Saved training sample: {saved_file}")
-            
-            # Cleanup temp files
-            os.remove(param_file)
-            os.remove(out_f2g)
-            return True
-        else:
-            print(f"[{unique_seed}] Error: {out_f2g} was not created.")
-            return False
-            
+        os.chdir(flumy_exe_dir)
+        exe_cmd = "flumy" if os.name == 'nt' else "./flumy"         # Automatically detect whether you are wokring in Linux or Windows
+        command_text = f'{exe_cmd} -b="{param_file}"'               # Input all params into flumy excecutable (.f2g is saved there saved in that process well)
+        
+        print(f'[{unique_seed}] Running: {command_text}')
+        start_time = time.time()
+        
+        # 2.1. Open the process in a subprocess which allows for multi-process simulation.
+        proc = subprocess.Popen(command_text)           # Flexibly execute a command in a new process
+        proc.wait()
+        
+        print(f"[{unique_seed}] Simulation finished in {np.round((time.time() - start_time)/60, 2)} min.")
+    # 3. IMPORTANT: No matter what happens, always return to the orginal working directory 
+    finally:
+        os.chdir(original_cwd)
+
+
+def parse_flumy_output(out_f2g, flumy_params, top_slice_offset):
+    """
+    Reads the .f2g file and converts it into a structured 3D numpy array.
+    
+    Parameters:
+    - out_f2g (str): The path to the output .f2g file.
+    - flumy_params (dict): A dictionary of all parameters modified to spawn the Flumy process
+
+    Returns:
+    - np.ndarray: A 3D array of facies
+    """
+    # 1. Check for path existance & read .csv output file
+    if not os.path.exists(out_f2g):
+        raise FileNotFoundError(f"Output file {out_f2g} was not created.")
+    #df = pd.read_csv(out_f2g, sep=r'\s+', comment='F', header=None)
+    raw_data = np.genfromtxt(out_f2g, comments='F', missing_values='NaN', filling_values=0)
+
+    #raw_col = pd.to_numeric(df.iloc[:, 0], errors='coerce').fillna(0).values 
+    raw_col = np.nan_to_num(raw_data, nan=0.0)
+
+    #facies_1d = np.clip(raw_col, 0, 255).astype(np.int32)                       # Limit x,y,z grid values to a range between 0 and 255 (256 options in total)
+    facies_1d = np.clip(raw_col, 0, 255).astype(np.int32)
+    
+    # 2. Get domain values from input
+    nx = flumy_params.get('DOMAIN_NX', 256)
+    ny = flumy_params.get('DOMAIN_NY', 256)
+    zul_topo = flumy_params.get('ZUL_TOPO', 64) 
+    dz = flumy_params.get('F2G_DZ', 1.0)
+    
+    #3. Calculate height of full voxel grid and convert to a 3D grid
+    actual_nz = len(facies_1d) // (nx * ny)
+    facies_3d_temp = facies_1d[:actual_nz * nx * ny].reshape((actual_nz, ny, nx))
+    nz_target = int(zul_topo / dz)
+    
+    # 4. Slice logic (keeping your specific slice -10) to end up with right dimensions
+    if actual_nz >= nz_target:
+        return facies_3d_temp[-nz_target:-top_slice_offset, :, :]
+    else:
+        print(f"Warning: actual_nz ({actual_nz}) < nz_target ({nz_target})")
+        return facies_3d_temp
+
+
+def run_flumy_worker(sim_id, base_seed, flumy_exe_dir, output_dir, temp_dir, top_slice_offset=10, **flumy_params):
+    """
+    The main orchestrator function.
+    
+    Parameters:
+    - sim_id: id which belongs to current simulation -> makes sure each simulation has an unique id.
+    - base_seed: base seed of the simulation.
+    - flumy_exe_dir (str): The path to the flumy executable directory.
+    - output_dir: Path towards exact output directory.
+    - temp_dir: Path towards temporary directory to store .bat and .f2g input files.
+    - top_slice_offset (int): Indicate the amounnt of voxels that should be taken off the maximum height -> this limits full channels to be present in the final 3D grid.
+    - flumy_params (dict): A dictionary of all parameters modified to spawn the Flumy process
+
+    Returns:
+    - None
+    """
+    # 1. Define unique seed & path towards input- and output file.
+    unique_seed = base_seed + sim_id
+    param_file = os.path.join(temp_dir, f"params_{unique_seed}.bat").replace('\\', '/')
+    out_f2g = os.path.join(temp_dir, f"out_{unique_seed}.f2g").replace('\\', '/')
+    
+    # 2. Run all steps to generate ONE sample
+    try:
+        # 2.1. Setup
+        batch_writer(param_file, out_f2g, unique_seed, **flumy_params)
+        
+        # 2.2. Execute
+        run_flumy_executable(flumy_exe_dir, param_file, unique_seed)
+        
+        # 2.3. Process
+        facies_3d = parse_flumy_output(out_f2g, flumy_params, top_slice_offset)
+        
+        # 2.4. Save
+        save_sample({'facies': facies_3d}, output_dir, f"sample_{unique_seed}", 'npz')
+        
+        return True
     except Exception as e:
-        print(f"[{unique_seed}] Processing Error: {e}")
+        print(f"[{unique_seed}] Critical Error: {e}")
         return False
+    
+    # 5. Cleanup (Always runs even if an error occurs)
+    finally:
+        for f in [param_file, out_f2g]:
+            if os.path.exists(f):
+                os.remove(f)

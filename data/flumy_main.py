@@ -19,31 +19,32 @@ def main():
     TEMP_DIR = os.path.join(BASE_PATH, "test_temp")
     
     NUM_SAMPLES = 1
-    BASE_SEED = 1
+    BASE_SEED = 100
     
     # Execution options
-    USE_PARALLEL = False
-    N_JOBS = 1  # -1 uses all available CPU cores
+    USE_PARALLEL = True
+    N_JOBS = -1  # -1 uses all available CPU cores
     SAVE_FORMAT = 'npz' # change to 'h5' if needed
     
     FLUMY_PARAMS = {
-        'F2G_DZ': 0.5,
+        'F2G_DZ': 1,
         'DOMAIN_NX': 256,
         'DOMAIN_NY': 256,
         'DOMAIN_DX': 10,
         'DOMAIN_DY': 10,
-        'ZUL_TOPO': 70,
+        'ZUL_TOPO': 74,
         'DOMAIN_SLOPE':0.001,
         'ZUL_TYPE': 1,
+        'EROD_COEF':8e-8,
 
-        'CHNL_WIDTH': 60,
+        'CHNL_WIDTH': 144,
         'CHNL_MAX_DEPTH': 8,            # Deeper channel for a certain width leads to higehr NTG
         'CHNL_WAVELENGTH': 1000,            # Higher wavelength for a certain width seems to lead to lower SI index
         'CHNL_SCALE_LOGNORM_MEAN': 100,        # This is the mean of the lognormal distribution for channel scaling. Higher values lead to wider channels.
         'CHNL_SCALE_LOGNORM_STDEV': 10,         # This is the standard deviation of the lognormal distribution for channel scaling. Higher values lead to more variability in channel widths.
 
         'AV_REG_FREQ': 2,
-        'AV_REG_POISSON': 100,
+        'AV_REG_POISSON': 200,
         'AV_LOC_FREQ': 2,
         'AV_LOC_POISSON': 50,
         'AV_LV_OB': 1,
@@ -52,11 +53,11 @@ def main():
 
         'AG_TYPE': 2,
         'AG_OB_FREQ': 2,
-        'AG_OB_POISSON': 300,
+        'AG_OB_POISSON': 55,
         'AG_OB_DIST': 3,
-        'AG_OB_LOGNORM_MEAN': 0.2,
-        'AG_OB_LOGNORM_STDEV': 0.02,
-        'AG_OB_PEAT': 5,
+        'AG_OB_LOGNORM_MEAN': 0.07,
+        'AG_OB_LOGNORM_STDEV': 0.007,
+        'AG_OB_PEAT': 10,
         'LAUNCH_IT': -1
     }
 

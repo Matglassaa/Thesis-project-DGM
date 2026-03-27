@@ -20,6 +20,11 @@ Architecture DCGAN
 
 ################################################################################
 # Imports
+import warnings
+# Ignore specific harmless warnings to clean up the terminal
+warnings.filterwarnings("ignore", category=UserWarning, module="h5py")
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import re
 import os
@@ -41,6 +46,8 @@ from voxgan.networks.utils import initialize_weights_normal
 from voxgan.models.loss import R1Regularization
 from voxgan.models.metrics import MSSWD, LoS
 
+from dataset import FaciesDataset
+
 
 ################################################################################
 # Paths
@@ -48,35 +55,6 @@ from voxgan.models.metrics import MSSWD, LoS
 global_path = os.getcwd()
 training_data_dir_path = Path(global_path,'datasets/training')
 output_dir_path = Path(global_path, 'outputs')
-
-###############################################################################
-# Class
-class FaciesDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = Path(root_dir)
-        self.files = [f for f in os.listdir(root_dir) if f.endswith('.npz')]
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.files)
-
-    def __getitem__(self, idx):
-        filepath = self.root_dir / self.files[idx]
-        # Load the data and extract the 'facies' array
-        data = np.load(filepath)['facies']
-        
-        # PyTorch 3D convolutions expect (Channels, Depth, Height, Width)
-        # Your data is (64, 256, 256). We need to add a channel dimension -> (1, 64, 256, 256)
-        data = np.expand_dims(data, axis=0) 
-        
-        # Convert to float tensor (GANs require floats, not integers)
-        tensor_data = torch.tensor(data, dtype=torch.float32)
-
-        if self.transform:
-            tensor_data = self.transform(tensor_data)
-
-        return tensor_data
-
 
 ################################################################################
 # Setting
@@ -88,10 +66,10 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
-num_gpus = 1
-num_training = 1
-num_epochs = 10
-batch_size = 2
+num_gpus = 2
+num_training = 3
+num_epochs = 150
+batch_size = 64
 
 
 ################################################################################
@@ -165,7 +143,7 @@ ms_swd = MSSWD(n_levels=3,
                combine_levels=True,
                batch_size=batch_size,
                n_gpu=num_gpus)
-los = LoS(channel=1, batch_size=batch_size, n_gpu=num_gpus)
+los = LoS(channel=0, batch_size=batch_size, n_gpu=num_gpus)
 metrics = [ms_swd, los]
 
 
@@ -177,6 +155,7 @@ transform = None#Compose([Crop(((1, 3), (8, 28), None, None)),
 #                      RandomCrop((None, 16, 128, 128)),
 #                      Scale(((0, 1), None)),
 #                      ToTensor()])
+
 dataset = partial(FaciesDataset,
                   root=training_data_dir_path,
                   transform=transform)

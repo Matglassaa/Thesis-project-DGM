@@ -22,6 +22,8 @@ Architecture DCGAN
 # Imports
 
 import re
+import os
+from pathlib import Path
 import shutil
 from functools import partial
 import numpy as np
@@ -29,6 +31,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import Dataset
 
 from voxgan.data.datasets import *
 from voxgan.data.fluvdeposet import FluvDepoSetDataset
@@ -42,8 +45,37 @@ from voxgan.models.metrics import MSSWD, LoS
 ################################################################################
 # Paths
 
-training_data_dir_path = '../data/train'
-output_dir_path = '../outputs'
+global_path = os.getcwd()
+training_data_dir_path = Path(global_path,'datasets/training')
+output_dir_path = Path(global_path, 'outputs')
+
+###############################################################################
+# Class
+class FaciesDataset(Dataset):
+    def __init__(self, root_dir, transform=None):
+        self.root_dir = Path(root_dir)
+        self.files = [f for f in os.listdir(root_dir) if f.endswith('.npz')]
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        filepath = self.root_dir / self.files[idx]
+        # Load the data and extract the 'facies' array
+        data = np.load(filepath)['facies']
+        
+        # PyTorch 3D convolutions expect (Channels, Depth, Height, Width)
+        # Your data is (64, 256, 256). We need to add a channel dimension -> (1, 64, 256, 256)
+        data = np.expand_dims(data, axis=0) 
+        
+        # Convert to float tensor (GANs require floats, not integers)
+        tensor_data = torch.tensor(data, dtype=torch.float32)
+
+        if self.transform:
+            tensor_data = self.transform(tensor_data)
+
+        return tensor_data
 
 
 ################################################################################
@@ -56,10 +88,10 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
-num_gpus = 2
-num_training = 3
-num_epochs = 150
-batch_size = 64
+num_gpus = 1
+num_training = 1
+num_epochs = 10
+batch_size = 2
 
 
 ################################################################################
@@ -68,8 +100,8 @@ batch_size = 64
 model = 'architecture_dcgan_4'
 
 nz = 100
-nc = 2
-nl = (2, 5, 5)
+nc = 1
+nl = (4, 6, 6)
 
 generator = partial(resnet.DeepGenerator3d,
                     nz=nz,
@@ -140,15 +172,15 @@ metrics = [ms_swd, los]
 ################################################################################
 # Dataset
 
-transform = Compose([Crop(((1, 3), (8, 28), None, None)),
-                     FillNaN((0., 'max+1')),
-                     RandomCrop((None, 16, 128, 128)),
-                     Scale(((0, 1), None)),
-                     ToTensor()])
-dataset = partial(FluvDepoSetDataset,
+transform = None#Compose([Crop(((1, 3), (8, 28), None, None)),
+#                      FillNaN((0., 'max+1')),
+#                      RandomCrop((None, 16, 128, 128)),
+#                      Scale(((0, 1), None)),
+#                      ToTensor()])
+dataset = partial(FaciesDataset,
                   root=training_data_dir_path,
-                  transform=transform,
-                  return_params=False)
+                  transform=transform)
+                  #return_params=False)
 
 
 ################################################################################
@@ -189,7 +221,7 @@ if __name__ == '__main__':
                   sampling_size=3,
                   metrics=metrics,
                   metric_step=100,
-                  validation_size=0.05,
+                  validation_size=0.1,
                   validation_batch_size=batch_size,
                   preload_validation=True,
                   resume_checkpoint_id=None)

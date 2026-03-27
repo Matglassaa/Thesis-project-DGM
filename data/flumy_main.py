@@ -18,8 +18,8 @@ def main():
     OUTPUT_DIR = os.path.join(BASE_PATH, "test_outputs")
     TEMP_DIR = os.path.join(BASE_PATH, "test_temp")
     
-    NUM_SAMPLES = 1
-    BASE_SEED = 100
+    NUM_SAMPLES = 20
+    BASE_SEED = 0
     
     # Execution options
     USE_PARALLEL = True

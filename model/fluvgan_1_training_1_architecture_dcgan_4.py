@@ -51,10 +51,16 @@ from dataset import FaciesDataset
 
 ################################################################################
 # Paths
+if os.name == 'nt':  # Windows
+    global_path = os.getcwd()
+    training_data_dir_path = Path(global_path,'datasets/training')
+    output_dir_path = Path(global_path, 'outputs')
 
-global_path = os.getcwd()
-training_data_dir_path = Path(global_path,'datasets/training')
-output_dir_path = Path(global_path, 'outputs')
+else: #Linux
+    home_path = Path.home()
+    training_data_dir_path = str(home_path / 'data' / 'training')
+    output_dir_path = str(home_path / 'workspace' / 'outputs')
+    os.makedirs(output_dir_path, exist_ok=True)
 
 ################################################################################
 # Setting
@@ -69,7 +75,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 num_gpus = 2
 num_training = 3
 num_epochs = 150
-batch_size = 64
+batch_size = 8
 
 
 ################################################################################
@@ -177,6 +183,7 @@ if __name__ == '__main__':
                         distributed=False,
                         backend='nccl',
                         use_amp_training=True)
+        
         gan.configure(optimizer_generator,
                       optimizer_discriminator,
                       loss_generator,
@@ -189,10 +196,12 @@ if __name__ == '__main__':
                       fake_label_discriminator=fake_label_discriminator,
                       penalty_generator=penalty_generator,
                       penalty_discriminator=penalty_discriminator)
+        
         gan.train(dataset,
                   num_epochs=num_iter_discriminator*num_epochs,
                   batch_size=batch_size,
                   num_workers=2*num_gpus,
+                  persistent_workers=True,
                   pin_memory=True,
                   drop_last=True,
                   checkpoint_step=1e12,

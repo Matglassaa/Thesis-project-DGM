@@ -1,6 +1,8 @@
+import os
 import torch
 import numpy as np
 from pathlib import Path
+from torch.utils.data import Dataset
 
 class FaciesDataset(Dataset):
     def __init__(self, root, transform=None):  # <-- Change root_dir to root

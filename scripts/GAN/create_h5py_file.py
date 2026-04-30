@@ -64,6 +64,18 @@ def main():
 
     print(f"Success! HDF5 dataset saved to: {args.output_file}")
 
+    # check dataset contents
+    print("-" * 30)
+    with h5py.File(args.output_file, 'r') as f:
+        for key in f.keys():
+            ds = f[key]
+            print(f"Dataset Name : {key}")
+            print(f"Shape        : {ds.shape}")
+            print(f"Data Type    : {ds.dtype}")
+            print(f"Chunk Size   : {ds.chunks}")
+            print(f"Compression  : {ds.compression}")
+            print("-" * 30)
+            
 if __name__ == '__main__':
     main()
 

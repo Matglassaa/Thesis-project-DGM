@@ -13,27 +13,37 @@ import h5py
 from glob import glob
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Convert directory of .npz files to a single .h5 file")
-    parser.add_argument('--data_dir', type=str, required=True, help='Path to the directory with .npz files')
+    parser = argparse.ArgumentParser(description="Convert directory of .npz/.npy files to a single .h5 file")
+    parser.add_argument('--data_dir', type=str, required=True, help='Path to the directory with .npz/.npy files')
     parser.add_argument('--output_file', type=str, required=True, help='Path and name for the output .h5 file (e.g., dataset.h5)')
+    parser.add_argument('--file_type', type=str, choices=['npz', 'npy'], default='npz', help='Type of input files (default: npz)')
     return parser.parse_args()
+
+def load_array(filepath, file_type):
+    """Helper function to correctly load either .npz or .npy files."""
+    if file_type == 'npz':
+        return np.load(filepath)['facies']
+    else:
+        return np.load(filepath) # .npy files return the array directly
 
 def main():
     args = parse_args()
     
-    npz_files = sorted(glob(os.path.join(args.data_dir, '*.npz')))
-    num_files = len(npz_files)
+    # Grab files based on the chosen file type
+    search_pattern = f"*.{args.file_type}"
+    files = sorted(glob(os.path.join(args.data_dir, search_pattern)))
+    num_files = len(files)
     
     if num_files == 0:
-        print(f"Error: No .npz files found in {args.data_dir}")
+        print(f"Error: No .{args.file_type} files found in {args.data_dir}")
         return
 
-    print(f"Found {num_files} .npz files. Starting conversion...")
+    print(f"Found {num_files} .{args.file_type} files. Starting conversion...")
 
     # Load the first file to get the grid dimensions (Z, Y, X)
-    first_file = np.load(npz_files[0])['facies']
+    first_file = load_array(files[0], args.file_type)
     grid_shape = first_file.shape
-    dtype = first_file.dtype # Likely uint8 or int64
+    dtype = first_file.dtype
 
     # Create the HDF5 file
     with h5py.File(args.output_file, 'w') as h5f:
@@ -46,8 +56,8 @@ def main():
         )
 
         # Populate the dataset
-        for i, file_path in enumerate(npz_files):
-            dataset[i] = np.load(file_path)['facies']
+        for i, file_path in enumerate(files):
+            dataset[i] = load_array(file_path, args.file_type)
             
             if (i + 1) % 500 == 0:
                 print(f"Processed {i + 1}/{num_files} files...")
@@ -56,3 +66,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# EXAMPLE RUN: python npz_to_h5py.py --data_dir data/test_outputs_upper_plain_delta --output_file data/test_outputs_upper_plain_delta/samples.h5 --file_type npy

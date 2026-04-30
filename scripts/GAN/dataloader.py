@@ -6,16 +6,31 @@ import h5py
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+import os
+import json
+import torch
+import numpy as np
+import h5py
+import torch.nn.functional as F
+from torch.utils.data import Dataset
+
 class FaciesDataset(Dataset):
-    def __init__(self, h5_path, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, **kwargs):
+    def __init__(self, h5_path, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, preload_ram=True, **kwargs):
         self.h5_path = h5_path
         self.use_one_hot = use_one_hot
+        self.preload_ram = preload_ram
         
-        # Open briefly just to get the total number of samples
+        # 1. Open the file
         with h5py.File(self.h5_path, 'r') as h5f:
             if 'facies' not in h5f:
                 raise KeyError(f"Dataset 'facies' not found in {self.h5_path}")
+            
             self.length = h5f['facies'].shape[0]
+            
+            if self.preload_ram:
+                print(f"Loading entire dataset ({self.length} samples) into RAM. Please wait...")
+                self.data_cache = h5f['facies'][:] # The [:] loads the whole array into memory
+                print("Loading complete! I/O bottleneck eliminated.")
         
         # Define mappings   
         if facies_mapping is None:
@@ -23,7 +38,6 @@ class FaciesDataset(Dataset):
             self.mapping[1:4] = 0   
             self.mapping[4:8] = 1   
             self.mapping[8:13] = 2  
-            
             self.reverse_mapping = {0: 1, 1: 4, 2: 8}
         else:
             max_val = max(facies_mapping.keys())
@@ -52,17 +66,18 @@ class FaciesDataset(Dataset):
         return self.length
 
     def __getitem__(self, idx):
-        # Open file inside __getitem__ to ensure thread safety with PyTorch workers
-        with h5py.File(self.h5_path, 'r') as h5f:
-            data = h5f['facies'][idx]
+        # Grab data from RAM cache OR from disk
+        if self.preload_ram:
+            data = self.data_cache[idx]
+        else:
+            with h5py.File(self.h5_path, 'r') as h5f:
+                data = h5f['facies'][idx]
         
         mapped_data = self.mapping[data]
         tensor_data = torch.from_numpy(mapped_data)
         
         if self.use_one_hot:
-            # .permute changes shape from (D, H, W, Channels) to (Channels, D, H, W)
             processed_data = F.one_hot(tensor_data, num_classes=3).permute(3, 0, 1, 2).float()
-            # SCALE TO [-1, 1] TO MATCH GENERATOR nn.Tanh()
             processed_data = (processed_data * 2.0) - 1.0
         else:
             processed_data = tensor_data.unsqueeze(0).float()

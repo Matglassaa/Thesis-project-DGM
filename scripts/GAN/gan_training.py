@@ -68,7 +68,7 @@ def main():
     last_activation = nn.Tanh
 
     generator = partial(resnet.DeepGenerator3d,
-                        nz=nz, ngf=64, nc=nc, nl=nl,
+                        nz=nz, ngf=32, nc=nc, nl=nl,
                         max_factor=16, residual_weight=1., mode='nearest', kernel_size=3,
                         layer_normalization=nn.BatchNorm3d,
                         last_layer_normalization=nn.BatchNorm3d,
@@ -79,8 +79,8 @@ def main():
                         use_attention=False, skip_z=False, split_z=False)
 
     discriminator = partial(resnet.DeepDiscriminator3d,
-                            ndf=64, nc=nc, nl=nl,
-                            max_factor=16, residual_weight=1., kernel_size=3,
+                            ndf=32, nc=nc, nl=nl,
+                            max_factor=8, residual_weight=1., kernel_size=3,
                             layer_normalization=None,
                             weight_normalization=nn.utils.parametrizations.spectral_norm,
                             activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),

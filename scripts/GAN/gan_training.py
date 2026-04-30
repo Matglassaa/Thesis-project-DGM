@@ -69,7 +69,7 @@ def main():
 
     generator = partial(resnet.DeepGenerator3d,
                         nz=nz, ngf=32, nc=nc, nl=nl,
-                        max_factor=16, residual_weight=1., mode='nearest', kernel_size=3,
+                        max_factor=8, residual_weight=1., mode='nearest', kernel_size=3,
                         layer_normalization=nn.BatchNorm3d,
                         last_layer_normalization=nn.BatchNorm3d,
                         weight_normalization=nn.utils.parametrizations.spectral_norm,
@@ -140,7 +140,7 @@ def main():
                         discriminator,
                         output_dir_path=args.output_dir,
                         output_label=output_label,
-                        verbose=2,
+                        verbose=1,
                         num_gpus=args.num_gpus,
                         num_nodes=1,
                         distributed=False,

@@ -31,7 +31,7 @@ from voxgan.models.metrics import MSSWD, LoS
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train DCGAN Architecture 4 for Geomodelling")
-    parser.add_argument('--data_dir', type=str, required=True, help='Path to the training data directory (.h5 file)')
+    parser.add_argument('--data_file', type=str, required=True, help='Path to the training data directory and name of the .h5 file')
     parser.add_argument('--output_dir', type=str, required=True, help='Path to the output directory')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training')
@@ -102,7 +102,7 @@ def main():
                          descriptor_size=(3, 7, 7),
                          n_repeat=12,
                          n_proj=128,
-                         padding_mode='circular', # Match working script exactly
+                         padding_mode='reflect', 
                          combine_levels=True, 
                          batch_size=args.val_batch_size,
                          n_gpu=args.num_gpus)
@@ -120,10 +120,10 @@ def main():
 
     ################################################################################
     # Dataset
-    dataset_name = os.path.basename(os.path.normpath(args.data_dir))
+    dataset_name = os.path.splitext(os.path.basename(args.data_file))[0]
     
     dataset = partial(FaciesDataset,
-                      root=args.data_dir,
+                      h5_path=args.data_file,
                       save_mapping_dir=args.output_dir,
                       use_one_hot=use_one_hot,
                       dataset_name=dataset_name,

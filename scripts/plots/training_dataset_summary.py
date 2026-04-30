@@ -155,15 +155,15 @@ def plot_facies_distribution(data_dir, output_dir, all_files):
     percentages = (total_counts / total_voxels) * 100
 
     # Console Output
-    print("\n--- Overall Facies Distribution Summary ---")
+    # print("\n--- Overall Facies Distribution Summary ---")
     # Convert facies_properties to a value-indexed map for easier lookup
     val_to_info = {info['val']: {'name': name, 'color': info['color']} 
                    for name, info in facies_properties.items()}
 
-    for val in range(14):
-        if total_counts[val] > 0:
-            name = val_to_info[val]['name'].replace('_', ' ').title()
-            print(f"[{val:2d}] {name:<22}: {percentages[val]:6.2f}% ({total_counts[val]:,} voxels)")
+    # for val in range(14):
+    #     if total_counts[val] > 0:
+    #         name = val_to_info[val]['name'].replace('_', ' ').title()
+    #         print(f"[{val:2d}] {name:<22}: {percentages[val]:6.2f}% ({total_counts[val]:,} voxels)")
 
     # Visualization
     plt.figure(figsize=(14, 7))

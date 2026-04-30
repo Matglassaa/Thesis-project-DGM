@@ -60,19 +60,19 @@ def main(output_dir= "test_outputs_lower_plain_delta", test_dir= "test_temp",
         'EROD_COEF':8e-8,
 
         'CHNL_MARGIN': 5,               # This value indidicates how many channel widths away from the boundary the flumy excecutable has to generate the simulation -> this ensures  higher variation
-        'CHNL_WIDTH': 70,              # Channel width
-        'CHNL_MAX_DEPTH': 4,            # Deeper channel for a certain width leads to higehr NTG
-        'CHNL_WAVELENGTH': 1000,            # Higher wavelength for a certain width seems to lead to lower SI index
+        'CHNL_WIDTH': 100,              # Channel width
+        'CHNL_MAX_DEPTH': 6,            # Deeper channel for a certain width leads to higehr NTG
+        'CHNL_WAVELENGTH': 800,            # Higher wavelength for a certain width seems to lead to lower SI index
         'CHNL_SCALE_LOGNORM_MEAN': 100,        # This is the mean of the lognormal distribution for channel scaling. Higher values lead to wider channels.
         'CHNL_SCALE_LOGNORM_STDEV': 10,         # This is the standard deviation of the lognormal distribution for channel scaling. Higher values lead to more variability in channel widths.
 
         'AV_REG_FREQ': 2,
-        'AV_REG_POISSON': 200,
+        'AV_REG_POISSON': 1000,
         'AV_LOC_FREQ': 2,
-        'AV_LOC_POISSON': 50,
+        'AV_LOC_POISSON': 600,
         'AV_LV_OB': 1,
         'AV_LOC_PROB1':0.3,
-        'AV_LOC_PROB2':0.9,
+        'AV_LOC_PROB2':0.5,
 
         'AG_TYPE': 2,
         'AG_OB_FREQ': 2,

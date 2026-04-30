@@ -80,7 +80,7 @@ def main(output_dir= "test_outputs_lower_plain_delta", test_dir= "test_temp",
         'AG_OB_DIST': 3,
         'AG_OB_LOGNORM_MEAN': 0.07,
         'AG_OB_LOGNORM_STDEV': 0.007,
-        'AG_OB_PEAT': 10,
+        'AG_OB_PEAT': 20,
         'LAUNCH_IT': -1
     }
 

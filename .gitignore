@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+# Ignore deep learning models and large datasets
+*.pt
+*.h5
+
 # Distribution / packaging
 .Python
 build/

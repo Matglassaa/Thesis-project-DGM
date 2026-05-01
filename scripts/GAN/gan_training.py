@@ -155,8 +155,8 @@ def main():
                       num_iter_discriminator=1,
                       num_accumulated=1, # Match fluvgan perfectly
                       fake_label_generator=1.,
-                      real_label_discriminator=1,
-                      fake_label_discriminator=0.,
+                      real_label_discriminator=1.0,
+                      fake_label_discriminator=0.0,
                       penalty_generator=None,
                       penalty_discriminator=penalty_discriminator)
         

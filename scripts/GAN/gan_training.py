@@ -68,8 +68,8 @@ def main():
     last_activation = nn.Tanh
 
     generator = partial(resnet.DeepGenerator3d,
-                        nz=nz, ngf=32, nc=nc, nl=nl,
-                        max_factor=8, residual_weight=1., mode='nearest', kernel_size=3,
+                        nz=nz, ngf=64, nc=nc, nl=nl,
+                        max_factor=16, residual_weight=1., mode='nearest', kernel_size=3,
                         layer_normalization=nn.BatchNorm3d,
                         last_layer_normalization=nn.BatchNorm3d,
                         weight_normalization=nn.utils.parametrizations.spectral_norm,
@@ -79,8 +79,8 @@ def main():
                         use_attention=False, skip_z=False, split_z=False)
 
     discriminator = partial(resnet.DeepDiscriminator3d,
-                            ndf=32, nc=nc, nl=nl,
-                            max_factor=8, residual_weight=1., kernel_size=3,
+                            ndf=64, nc=nc, nl=nl,
+                            max_factor=16, residual_weight=1., kernel_size=3,
                             layer_normalization=None,
                             weight_normalization=nn.utils.parametrizations.spectral_norm,
                             activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
@@ -88,7 +88,7 @@ def main():
                             use_attention=False)
 
     optimizer_generator = partial(optim.Adam, lr=2e-4, betas=(0., 0.99))
-    optimizer_discriminator = partial(optim.Adam, lr=2e-4, betas=(0., 0.99))
+    optimizer_discriminator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
     
     loss_generator = nn.BCEWithLogitsLoss()
     loss_discriminator = nn.BCEWithLogitsLoss()
@@ -102,7 +102,7 @@ def main():
                          descriptor_size=(3, 7, 7),
                          n_repeat=12,
                          n_proj=128,
-                         padding_mode='reflect', 
+                         padding_mode='circular', 
                          combine_levels=True, 
                          batch_size=args.val_batch_size,
                          n_gpu=args.num_gpus)
@@ -155,7 +155,7 @@ def main():
                       num_iter_discriminator=1,
                       num_accumulated=1, # Match fluvgan perfectly
                       fake_label_generator=1.,
-                      real_label_discriminator=1.,
+                      real_label_discriminator=1,
                       fake_label_discriminator=0.,
                       penalty_generator=None,
                       penalty_discriminator=penalty_discriminator)
@@ -196,3 +196,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# EXAMPLE RUN: nohup python -u gan_training.py  --data_file ~/data/training_dataset_upper_plain_delta_128/training_datset_upper_plane_delta.h5 --output_dir ~/data/outputs_upper_plain_delta_128/5_epochs_batch_size_8_val_size_10       --num_gpus 2       --epochs 5       --batch_size 8  --val_batch_size 8      --validation_size 0.1       --disable_one_hot       > training_no_onehot.out 2>&1 &

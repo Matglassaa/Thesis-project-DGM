@@ -106,9 +106,9 @@ def generate_realizations(ckpt_path, output_dir, num_realizations=10):
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
-    parser.add_argument('--csv_path', type=str, default='outputs/RUN_3_1_epoch_128xy_less_channels/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/RUN_3_1_epoch_128xy_less_channels/architecture_4_dcgan_training_datset_upper_plane_delta_no_one_hot_epochs_1_bs_16_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default=r'C:\Users\mathi\Desktop\TU Delft\TU Delft year 5\Master Thesis\Thesis-project-DGM\outputs\RUN_3_1_epoch_128xy_less_channels', help='Output folder')
+    parser.add_argument('--csv_path', type=str, default='outputs/RUN_3_5_epochs_128xy_batch_sizes_8_label_smoothing/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/RUN_3_5_epochs_128xy_batch_sizes_8_label_smoothing/architecture_4_dcgan_training_datset_upper_plane_delta_no_one_hot_epochs_5_bs_8_run_1.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default=r'C:\Users\mathi\Desktop\TU Delft\TU Delft year 5\Master Thesis\Thesis-project-DGM\outputs\RUN_3_5_epochs_128xy_batch_sizes_8_label_smoothing', help='Output folder')
     parser.add_argument('--num_reals', type=int, default=10, help='Number of realizations to generate')
     args = parser.parse_args()
 

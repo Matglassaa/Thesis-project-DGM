@@ -79,4 +79,4 @@ def main():
 if __name__ == '__main__':
     main()
 
-# EXAMPLE RUN: python npz_to_h5py.py --data_dir data/test_outputs_upper_plain_delta --output_file data/test_outputs_upper_plain_delta/samples.h5 --file_type npy
+# EXAMPLE RUN: python create_h5py_file.py --data_dir data/test_outputs_upper_plain_delta --output_file data/test_outputs_upper_plain_delta/samples.h5 --file_type npy

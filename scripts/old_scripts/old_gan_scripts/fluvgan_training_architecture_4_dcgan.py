@@ -68,7 +68,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 
 num_gpus = 2
 num_training = 1
-num_epochs = 50
+num_epochs = 1
 batch_size = 8
 
 
@@ -186,7 +186,7 @@ if __name__ == '__main__':
                       num_iter_discriminator=num_iter_discriminator,
                       num_accumulated=num_accumulated,
                       fake_label_generator=fake_label_generator,
-                      real_label_discriminator=real_label_discriminator,
+                      real_label_discriminator=0.9,
                       fake_label_discriminator=fake_label_discriminator,
                       penalty_generator=penalty_generator,
                       penalty_discriminator=penalty_discriminator)

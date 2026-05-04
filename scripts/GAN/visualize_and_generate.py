@@ -60,7 +60,7 @@ def generate_realizations(ckpt_path, output_dir, num_realizations=10):
         return
 
     nz = 100
-    nc = 3
+    nc = 1
     ngf = 64
     max_factor = 16
     nl = (4, 6, 6)
@@ -106,10 +106,10 @@ def generate_realizations(ckpt_path, output_dir, num_realizations=10):
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
-    parser.add_argument('--csv_path', type=str, default='outputs/RUN_4_10_epochs_256xy_1997_samples_one_hot_batch_size_8/fluvgan_1_training_1_architecture_4_dcgan_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/RUN_4_10_epochs_256xy_1997_samples_one_hot_batch_size_8/architecture_4_dcgan_samples_one_hot_epochs_10_bs_8_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default=r'C:\Users\mathi\Desktop\TU Delft\TU Delft year 5\Master Thesis\Thesis-project-DGM\outputs\RUN_4_10_epochs_256xy_1997_samples_one_hot_batch_size_8', help='Output folder')
-    parser.add_argument('--num_reals', type=int, default=5, help='Number of realizations to generate')
+    parser.add_argument('--csv_path', type=str, default='outputs/RUN_1997_samples_50_epochs/fluvgan_1_training_1_architecture_4_dcgan_1_history.csv', help='Path to the history CSV for plotting losses')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/RUN_1997_samples_50_epochs/fluvgan_1_training_1_architecture_dcgan_4_1_training_checkpoint_iteration_11200.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default=r'C:\Users\mathi\Desktop\TU Delft\TU Delft year 5\Master Thesis\Thesis-project-DGM\outputs\RUN_1997_samples_50_epochs', help='Output folder')
+    parser.add_argument('--num_reals', type=int, default=20, help='Number of realizations to generate')
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)

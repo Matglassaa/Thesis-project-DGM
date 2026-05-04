@@ -30,9 +30,9 @@ def os_check():
 
     return FLUMY_EXE_DIR, BASE_PATH
 
-def main(output_dir= "test_outputs_lower_plain_delta", test_dir= "test_temp", 
-         num_samples=10, start_count=1, base_seed=0, use_parallel=True, 
-         n_jobs=16, save_format='npy', save_all_data=False):
+def main(output_dir= "test_outputs", test_dir= "test_temp", 
+         num_samples=10000, start_count=1, base_seed=0, use_parallel=True, 
+         n_jobs=32, save_format='npy', save_all_data=False):
     
     # adjust n_jobs if num_samples < n_jobs to avoid overhead
     if num_samples < n_jobs:
@@ -54,7 +54,7 @@ def main(output_dir= "test_outputs_lower_plain_delta", test_dir= "test_temp",
         'DOMAIN_NY': 128,
         'DOMAIN_DX': 20,
         'DOMAIN_DY': 20,
-        'ZUL_TOPO': 74,
+        'ZUL_TOPO': 42,
         'DOMAIN_SLOPE':0.001,
         'ZUL_TYPE': 1,
         'EROD_COEF':8e-8,

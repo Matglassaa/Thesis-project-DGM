@@ -163,7 +163,7 @@ def main():
         gan.train(dataset,
                   num_epochs=args.epochs,
                   batch_size=args.batch_size,
-                  num_workers=4 * args.num_gpus if use_one_hot else 2 * args.num_gpus,
+                  num_workers=0 * args.num_gpus,
                   pin_memory=True,
                   drop_last=True,
                   checkpoint_step=1e12,

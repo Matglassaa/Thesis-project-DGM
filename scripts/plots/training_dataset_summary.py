@@ -390,3 +390,4 @@ if __name__ == "__main__":
     main()
 
 # EXAMPLE RUN: python scripts\Plots\training_dataset_summary.py --data_dir data\test_outputs --output_dir data\test_outputs_{add} --num_files 10
+# python scripts\Plots\training_dataset_summary.py --data_dir data\test_outputs_lower_plain_delta_nz_32  --output_dir data\test_outputs_lower_plain_delta_nz_32 --num_files 5 

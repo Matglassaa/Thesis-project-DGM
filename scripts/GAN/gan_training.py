@@ -7,7 +7,6 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import re
 import os
-import argparse
 from pathlib import Path
 import shutil
 from functools import partial
@@ -18,8 +17,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-# Import your Custom Dataloader
+# Import Custom Modules
 from dataloader import FaciesDataset
+from utils import parse_hybrid_args, validate_dataset, save_config
 
 # VoxGAN Imports
 from voxgan.data.datasets import *
@@ -29,20 +29,8 @@ from voxgan.networks.utils import initialize_weights_normal
 from voxgan.models.loss import R1Regularization
 from voxgan.models.metrics import MSSWD, LoS
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train DCGAN Architecture 4 for Geomodelling")
-    parser.add_argument('--data_file', type=str, required=True, help='Path to the training data directory and name of the .h5 file')
-    parser.add_argument('--output_dir', type=str, required=True, help='Path to the output directory')
-    parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training')
-    parser.add_argument('--val_batch_size', type=int, default=8, help='Batch size for validation')
-    parser.add_argument('--num_gpus', type=int, default=2, help='Number of GPUs to use')
-    parser.add_argument('--disable_one_hot', action='store_true', help='Disable one-hot encoding (use single-channel raw indices)')
-    parser.add_argument('--validation_size', type=float, default=0.1, help='Percentage of files set aside for validation (default: 0.1 for 10%)')
-    return parser.parse_args()
-
 def main():
-    args = parse_args()
+    config = parse_hybrid_args()
 
     ################################################################################
     # Setting
@@ -52,7 +40,17 @@ def main():
     torch.backends.cudnn.benchmark = False
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    # Setup run directory
+    run_dir = os.path.join(config['output_dir'], config['run_name'])
+    os.makedirs(run_dir, exist_ok=True)
+    
+    # Save configuration to the run directory
+    config_save_path = os.path.join(run_dir, "config.json")
+    save_config(config, config_save_path)
+    print(f"Saved run configuration to: {config_save_path}")
+
+    # Validate the dataset before training
+    validate_dataset(config['data_file'])
 
     ################################################################################
     # Model configuration
@@ -60,7 +58,7 @@ def main():
     nz = 100
     nl = (4, 6, 6)
     
-    use_one_hot = not args.disable_one_hot
+    use_one_hot = not config['disable_one_hot']
     nc = 3 if use_one_hot else 1
     encoding_tag = "one_hot" if use_one_hot else "no_one_hot"
     
@@ -98,36 +96,37 @@ def main():
     ################################################################################
     # Validation
     metric_params = dict(n_levels=3,
-                         n_descriptors=512,
+                         n_descriptors=1024,
                          descriptor_size=(3, 7, 7),
                          n_repeat=12,
-                         n_proj=128,
+                         n_proj=256,
                          padding_mode='circular', 
                          combine_levels=True, 
-                         batch_size=args.val_batch_size,
-                         n_gpu=args.num_gpus)
+                         batch_size=config['val_batch_size'],
+                         n_gpu=config['num_gpus'])
 
+    #### COMMENT: increase n_descriptors in the MSSWD metric -> larger 3D blocks so more information to be processed!
     if use_one_hot:
         ms_swd_fa1 = MSSWD(**metric_params, channel=0)
         ms_swd_fa2 = MSSWD(**metric_params, channel=1)
         ms_swd_fa3 = MSSWD(**metric_params, channel=2)
-        los = LoS(channel=0, batch_size=args.val_batch_size, n_gpu=args.num_gpus)
+        los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
         metrics = [ms_swd_fa1, ms_swd_fa2, ms_swd_fa3, los]
     else:
         ms_swd = MSSWD(**metric_params)
-        los = LoS(channel=0, batch_size=args.val_batch_size, n_gpu=args.num_gpus)
+        los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
         metrics = [ms_swd, los]
 
     ################################################################################
     # Dataset
-    dataset_name = os.path.splitext(os.path.basename(args.data_file))[0]
+    dataset_name = os.path.splitext(os.path.basename(config['data_file']))[0]
     
     dataset = partial(FaciesDataset,
-                      h5_path=args.data_file,
-                      save_mapping_dir=args.output_dir,
+                      h5_path=config['data_file'],
+                      save_mapping_dir=run_dir,
                       use_one_hot=use_one_hot,
                       dataset_name=dataset_name,
-                      num_epochs=args.epochs)
+                      num_epochs=config['epochs'])
 
     ################################################################################
     # Training
@@ -138,10 +137,10 @@ def main():
         
         gan = CustomGAN(generator,
                         discriminator,
-                        output_dir_path=args.output_dir,
+                        output_dir_path=run_dir,
                         output_label=output_label,
                         verbose=1,
-                        num_gpus=args.num_gpus,
+                        num_gpus=config['num_gpus'],
                         num_nodes=1,
                         distributed=False,
                         backend='nccl',
@@ -161,9 +160,9 @@ def main():
                       penalty_discriminator=penalty_discriminator)
         
         gan.train(dataset,
-                  num_epochs=args.epochs,
-                  batch_size=args.batch_size,
-                  num_workers=0 * args.num_gpus,
+                  num_epochs=config['epochs'],
+                  batch_size=config['batch_size'],
+                  num_workers=0 * config['num_gpus'],
                   pin_memory=True,
                   drop_last=True,
                   checkpoint_step=1e12,
@@ -171,31 +170,49 @@ def main():
                   sampling_size=3,
                   metrics=metrics,
                   metric_step=100,
-                  validation_size=args.validation_size,
-                  validation_batch_size=args.val_batch_size,
+                  validation_size=config['validation_size'],
+                  validation_batch_size=config['val_batch_size'],
                   preload_validation=True,
                   resume_checkpoint_id=None)
 
         ################################################################################
         # Cleaning Checkpoints and Saving the Final `.pt` File
         
-        checkpoint_dir_path = os.path.join(args.output_dir, f'{output_label}_Training_Checkpoints')
+        checkpoint_dir_path = os.path.join(run_dir, f'{output_label}_Training_Checkpoints')
         checkpoint_paths = glob(os.path.join(checkpoint_dir_path, f'{output_label}_training_checkpoint_*'))
         
         if checkpoint_paths:
             checkpoint_paths = sorted(checkpoint_paths, key=lambda s: int(re.findall(r'\d+', str(s))[-1]))
             last_checkpoint = checkpoint_paths[-1]
 
-            new_filename = f"{model_name}_{dataset_name}_{encoding_tag}_epochs_{args.epochs}_bs_{args.batch_size}_run_{i + 1}.pt"
-            final_checkpoint_path = os.path.join(args.output_dir, new_filename)
+            new_filename = f"{model_name}_{dataset_name}_{encoding_tag}_epochs_{config['epochs']}_bs_{config['batch_size']}_run_{i + 1}.pt"
+            final_checkpoint_path = os.path.join(run_dir, new_filename)
 
             shutil.copy(last_checkpoint, final_checkpoint_path)
             shutil.rmtree(checkpoint_dir_path)
             
             print(f"Saved final renamed model checkpoint to: {final_checkpoint_path}")
 
+            ################################################################################
+            # Visualization and Generation (Post-training)
+            print("-" * 35)
+            print("Running post-training visualization and generation...")
+            try:
+                from visualize_and_generate import plot_losses, generate_realizations
+                
+                # Plot losses
+                csv_path = os.path.join(run_dir, f"{output_label}_history.csv")
+                plot_losses(csv_path, run_dir)
+                
+                # Generate realizations
+                generate_realizations(final_checkpoint_path, run_dir, num_realizations=10)
+                print("Post-training visualization complete.")
+            except ImportError as e:
+                print(f"Could not import visualization modules: {e}")
+            except Exception as e:
+                print(f"Error during post-training visualization: {e}")
+
 if __name__ == '__main__':
     main()
 
-
-# EXAMPLE RUN: nohup python -u gan_training.py  --data_file ~/data/training_dataset_upper_plain_delta_128/training_datset_upper_plane_delta.h5 --output_dir ~/data/outputs_upper_plain_delta_128/5_epochs_batch_size_8_val_size_10       --num_gpus 2       --epochs 5       --batch_size 8  --val_batch_size 8      --validation_size 0.1       --disable_one_hot       > training_no_onehot.out 2>&1 &
+# EXAMPLE RUN: nohup python -u gan_training.py --run_name test_run_01 --data_file ~/data/training_dataset_upper_plain_delta_128/training_datset_upper_plane_delta.h5 --output_dir ~/data/outputs_upper_plain_delta_128 --num_gpus 2 --epochs 5 --batch_size 8 --val_batch_size 8 --validation_size 0.1 --disable_one_hot > training_no_onehot.out 2>&1 &

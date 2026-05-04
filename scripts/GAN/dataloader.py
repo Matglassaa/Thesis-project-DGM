@@ -6,14 +6,6 @@ import h5py
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-import os
-import json
-import torch
-import numpy as np
-import h5py
-import torch.nn.functional as F
-from torch.utils.data import Dataset
-
 class FaciesDataset(Dataset):
     def __init__(self, h5_path, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, preload_ram=True, **kwargs):
         self.h5_path = h5_path

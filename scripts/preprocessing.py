@@ -2,8 +2,9 @@
 This script converts a directory of .npz/.npy files containing 3D facies data into a single .h5 file for efficient storage and access.
 Each file is expected to contain a single array named 'facies' with shape (Z, Y, X) and integer values representing facies classes.
 The resulting .h5 file will have a dataset named 'facies' with shape (N, Z, Y, X), where N is the number of .npz files.
-Usage:
-    python npz_to_h5py.py --data_dir /path/to/npz_files --output_file /path/to/output/dataset.h5
+
+Example usage on a Linux cluster:
+    nohup python -u preprocessing.py --data_dir /path/to/npz_files --output_file /path/to/output/dataset.h5 > preprocessing.log 2>&1 &
 """
 
 import os
@@ -98,5 +99,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-# EXAMPLE RUN: python create_h5py_file.py --data_dir data/test_outputs_upper_plain_delta --output_file data/test_outputs_upper_plain_delta/samples.h5 --file_type npy

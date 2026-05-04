@@ -1,6 +1,20 @@
+"""
+This script contains custom plotting configurations and colormaps used across the visualization scripts.
+It ensures consistent styling and facies representations for all generated plots.
+
+Example usage on a Linux cluster:
+    nohup python -u custom_plots.py > custom_plots.log 2>&1 &
+"""
+
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+
+def parse_args():
+    """Parses command-line arguments."""
+    parser = argparse.ArgumentParser(description="Custom plotting configurations and colormaps test script.")
+    return parser.parse_args()
 
 class FaciesColorMap(mcolors.ListedColormap):
     """
@@ -87,3 +101,9 @@ def apply_custom_plotting_flavor():
 
     # Line formatting
     plt.rcParams['lines.linewidth'] = 0.6
+
+def main():
+    args = parse_args()
+
+if __name__ == "__main__":
+    main()

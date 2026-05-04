@@ -1,8 +1,6 @@
 import numpy as np
-import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import shutil
 
 def apply_custom_plotting_flavor():
     """

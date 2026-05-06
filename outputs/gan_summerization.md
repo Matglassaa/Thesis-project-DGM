@@ -10,8 +10,7 @@ Extract and summarize all the initial model settings from `settings.json` by cre
 After the table, write a concise technical analysis based on `loss_visualization.png`, `fluvgan_1_training_1_architecture_dcgan_4_1_history.csv`, `overall_facies_distribution.png`, and the three entropy PNG files. Address the following points explicitly:
 
 1. **Loss Trends:** Analyze the Discriminator and Generator loss. Does one tend to go to zero while the other stays high (indicating potential mode collapse or overpowering)? Comment on the stability of the training and how often the losses explode or spike during the training sequence. Reference the CSV for exact values where helpful.
-2. **Facies Distribution:** Estimate the distribution of the facies in terms of percentages based on the charts. Assuming there are three facies, identify which values/categories are dominant.
-3. **Entropy Analysis:** Looking at the three entropy `.png` files, describe the spatial uncertainty. Is the entropy strictly higher than zero everywhere, or are there distinct regions of low/zero entropy? What does this imply about the model's confidence in those regions?
+2. **Entropy Analysis:** Looking at the three entropy `.png` files, describe the spatial uncertainty. Is the entropy strictly higher than zero everywhere, or are there distinct regions of low/zero entropy? What does this imply about the model's confidence in those regions?
 
 **Output Instructions:**
-Provide the final output exclusively as valid Markdown content, structured cleanly with headers, so that it can be saved directly into a new file named `model_summarization.md`.
+Provide the final output exclusively as valid Markdown content, structured cleanly with headers, so that it can be saved directly into a new file named `model_summarization.md`. Make sure to save this file in the same directory as the data contect files.

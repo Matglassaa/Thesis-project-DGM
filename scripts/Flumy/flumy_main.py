@@ -20,13 +20,13 @@ def os_check():
 
     if os.name == 'nt':  # Windows
         FLUMY_EXE_DIR = FLUMY_EXE_DIR_WINDWOWS
-        BASE_PATH = os.path.join(os.getcwd(), 'data')
+        BASE_PATH = os.path.join(os.getcwd(), 'data','datasets')
 
     else:  # Linux
         FLUMY_EXE_DIR = "/home/nfs/mtorresruhe/software/flumy/bin"
         # This uses the symlink in your home dir automatically
         home_dir = os.path.expanduser("~") 
-        BASE_PATH = os.path.join(home_dir, 'data', 'flumy_run')
+        BASE_PATH = os.path.join(home_dir, 'data', 'flumy_r')
 
     return FLUMY_EXE_DIR, BASE_PATH
 

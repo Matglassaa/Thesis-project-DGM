@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument('--file_type', type=str, choices=['npz', 'npy'], default='npy', help='Type of input files (default: npz)')
     parser.add_argument('--plot_dir', type=str, default=None, help='Directory to save generated plots (default: same as output_file)')
     parser.add_argument('--num_plot_samples', type=int, default=10, help='Number of realizations to sample for the entropy plot')
+    
     return parser.parse_args()
 
 def load_array(filepath, file_type):

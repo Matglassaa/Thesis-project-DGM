@@ -34,8 +34,8 @@ def main():
 
     ################################################################################
     # Setting
-    np.random.seed(42)
-    torch.manual_seed(42)
+    np.random.seed(43)
+    torch.manual_seed(43)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.backends.cuda.matmul.allow_tf32 = True

@@ -91,7 +91,7 @@ def main():
     loss_generator = nn.BCEWithLogitsLoss()
     loss_discriminator = nn.BCEWithLogitsLoss()
     
-    penalty_discriminator = R1Regularization(gamma=10., num_iter=16, use_amp=True)
+    penalty_discriminator = R1Regularization(gamma=10., num_iter=16, use_amp=True)      # Have a lower num_iter -> 
 
     ################################################################################
     # Validation

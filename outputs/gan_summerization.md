@@ -14,3 +14,6 @@ After the table, write a concise technical analysis based on `loss_visualization
 
 **Output Instructions:**
 Provide the final output exclusively as valid Markdown content, structured cleanly with headers, so that it can be saved directly into a new file named `model_summarization.md`. Make sure to save this file in the same directory as the data contect files.
+
+
+**Example usage:** use the instruction in gan_summerization.md to give an overview of the RUN_50_epochs_batch_size_8_val_size_10_one_hot directory. Use entropy_matrix_XY_RUN_50_epochs_batch_size_8_val_size_10_one_hot_20_samples.png , loss_visualization.png and fluvgan_1_training_1_architecture_4_dcgan_one_hot_1_history.csv , Instead of using the settings.json file use these settings instead: nohup python -u gan_training.py --data_file ~/data/flumy_run/test_outputs/samples.h5 --output_dir ~/data/flumy_run/50_epochs_batch_size_8_val_size_10 --num_gpus 2 --epochs 50 --batch_size 8 --validation_size 0.1 > training_no_onehot.out 2>&1 &

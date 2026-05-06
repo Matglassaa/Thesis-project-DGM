@@ -77,6 +77,18 @@ def parse_hybrid_args():
 
     if not config.get('data_file'):
         parser.error("--data_file is required (via CLI or config file).")
+
+    # Save settings to settings.json file in output directory
+    run_dir = os.path.join(config['output_dir'], config['run_name'])
+    os.makedirs(run_dir, exist_ok=True)
+    settings_path = os.path.join(run_dir, 'settings.json')
+    settings_path = os.path.join(config['output_dir'], 'settings.json')
+    try:
+        with open(settings_path, 'w') as f:
+            json.dump(config, f, indent=4)
+        print(f"Configuration saved to: {settings_path}")
+    except Exception as e:
+        print(f"Warning: Could not save settings.json. Error: {e}")
         
     return config
 

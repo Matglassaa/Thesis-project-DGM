@@ -59,7 +59,7 @@ class FaciesDataset(Dataset):
             if self.preload_ram:
                 print(f"Loading entire dataset ({self.length} samples) into RAM. Please wait...")
                 self.data_cache = h5f['facies'][:, -nz:, :, :] # The [-n,:,:] loads the whole array from a specifc slice untill the top into RAM
-                print("Loading into RAM complete!")
+                print("Loading into RAM complete!\n")
         
         # Define mappings   
         if facies_mapping is None:

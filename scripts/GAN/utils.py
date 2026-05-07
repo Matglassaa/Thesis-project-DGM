@@ -102,7 +102,7 @@ def validate_dataset(h5_path):
     Raises:
         ValueError: If the dataset is invalid or corrupted.
     """
-    print(f"--- Validating dataset: {h5_path} ---")
+    print(f"\n--- Validating dataset: {h5_path} ---")
     try:
         with h5py.File(h5_path, 'r') as h5f:
             if 'facies' not in h5f:
@@ -129,7 +129,7 @@ def validate_dataset(h5_path):
                         raise ValueError("Dataset appears to be corrupted (all zeros).")
                         
             print("Dataset validation passed!")
-            print("-" * 35)
+            print("-" * 35,"\n")
             
     except Exception as e:
         raise ValueError(f"Failed to validate dataset: {str(e)}")

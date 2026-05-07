@@ -191,7 +191,7 @@ def main():
             shutil.copy(last_checkpoint, final_checkpoint_path)
             shutil.rmtree(checkpoint_dir_path)
             
-            print(f"Saved final renamed model checkpoint to: {final_checkpoint_path}")
+            print(f"Saved final renamed model checkpoint to: {final_checkpoint_path}\n")
 
             ################################################################################
             # Visualization and Generation (Post-training)
@@ -205,7 +205,7 @@ def main():
                 plot_losses(csv_path, run_dir)
                 
                 # Generate realizations
-                generate_realizations(final_checkpoint_path, run_dir, num_realizations=10)
+                generate_realizations(nc,final_checkpoint_path, run_dir, num_realizations=10)
                 print("Post-training visualization complete.")
             except ImportError as e:
                 print(f"Could not import visualization modules: {e}")

@@ -10,14 +10,15 @@ from voxgan.networks import resnet
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
-    parser.add_argument('--csv_path', type=str, default='outputs/RUN_50_epochs_batch_size_8_val_size_10_one_hot/fluvgan_1_training_1_architecture_4_dcgan_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/RUN_50_epochs_batch_size_8_val_size_10_one_hot/architecture_4_dcgan_samples_one_hot_epochs_50_bs_8_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default=r'C:\Users\mathi\Desktop\TU Delft\TU Delft year 5\Master Thesis\Thesis-project-DGM\outputs\RUN_50_epochs_batch_size_8_val_size_10_one_hot', help='Output folder')
+    parser.add_argument('--csv_path', type=str, default='outputs/RUN_01_1997_samples_seed_43/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/RUN_01_1997_samples_seed_43/architecture_4_dcgan_samples_no_one_hot_epochs_5_bs_8_run_1.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default=r'C:\Users\mathi\Desktop\TU Delft\TU Delft year 5\Master Thesis\Thesis-project-DGM\outputs\RUN_01_1997_samples_seed_43', help='Output folder')
     parser.add_argument('--num_reals', type=int, default=20, help='Number of realizations to generate')
 
     return parser.parse_args()
 
 def plot_losses(csv_path, output_dir):
+
     if not os.path.exists(csv_path):
         print(f"Loss CSV not found at '{csv_path}'. Skipping loss visualization.")
         return
@@ -69,7 +70,7 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
         return
 
     nz = 100
-    nc = 3
+    nc = nc
     ngf = 64
     max_factor = 16
     nl = (4, 6, 6)
@@ -118,7 +119,7 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
     plot_losses(args.csv_path, args.output_dir)
-    generate_realizations(args.ckpt_path, args.output_dir, args.num_reals)
+    generate_realizations(1, args.ckpt_path, args.output_dir, args.num_reals)
 
 if __name__ == '__main__':
     main()

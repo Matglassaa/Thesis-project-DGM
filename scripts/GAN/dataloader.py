@@ -54,11 +54,16 @@ class FaciesDataset(Dataset):
             if 'facies' not in h5f:
                 raise KeyError(f"Dataset 'facies' not found in {self.h5_path}")
             
-            self.length = h5f['facies'].shape[0]
+            total_length = h5f['facies'].shape[0]
+            
+            if num_samples is not None:
+                self.length = min(num_samples, total_length)
+            else:
+                self.length = total_length
             
             if self.preload_ram:
-                print(f"Loading entire dataset ({self.length} samples) into RAM. Please wait...")
-                self.data_cache = h5f['facies'][:num_samples, -nz:, :, :] # The [-n,:,:] loads the whole array from a specifc slice untill the top into RAM
+                print(f"Loading {self.length} samples into RAM. Please wait...")
+                self.data_cache = h5f['facies'][:self.length, -nz:, :, :] # Loads based on the strictly defined length
                 num_loaded, depth, height, width = self.data_cache.shape
                 print(f"Loading {num_loaded} samples into RAM complete!\n")
         

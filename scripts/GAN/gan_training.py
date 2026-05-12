@@ -216,4 +216,8 @@ def main():
 if __name__ == '__main__':
     main()
 
-# EXAMPLE RUN: nohup python -u gan_training.py --run_name test_run_01 --data_file ~/data/training_dataset_upper_plain_delta_128/training_datset_upper_plane_delta.h5 --output_dir ~/data/outputs_upper_plain_delta_128 --num_gpus 2 --epochs 5 --batch_size 8 --val_batch_size 8 --validation_size 0.1 --disable_one_hot > training_no_onehot.out 2>&1 &
+# EXAMPLE RUN: nohup python -u gan_training.py --run_name test_run_01 
+#               --data_file ~/data/training_dataset_upper_plain_delta_128/training_datset_upper_plane_delta.h5 
+#               --output_dir ~/data/outputs_upper_plain_delta_128   
+#               --num_gpus 2 --epochs 5 --batch_size 8 --val_batch_size 8 --validation_size 0.1 --disable_one_hot > training.out 2>&1 &
+# nohup python -u gan_training.py --run_name RUN_2000_samples_128xy_dataset_50_epochs --data_file ~/data/datasets/training_dataset_upper_plain_delta_128/training_datset_upper_plane_delta.h5 --output_dir ~/data/outputs/UPD_2000_samples_128xy_seed_43 

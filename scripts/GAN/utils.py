@@ -43,6 +43,7 @@ def parse_hybrid_args():
     parser.add_argument('--output_dir', type=str, default=argparse.SUPPRESS, help='Base output directory')
     parser.add_argument('--run_name', type=str, default=argparse.SUPPRESS, help='Name of the run folder to be created inside output_dir')
     parser.add_argument('--epochs', type=int, default=argparse.SUPPRESS, help='Number of training epochs')
+    parser.add_argument('--num_samples', type=int, default=argparse.SUPPRESS, help='Number of samples to generate for evaluation')
     parser.add_argument('--batch_size', type=int, default=argparse.SUPPRESS, help='Batch size for training')
     parser.add_argument('--val_batch_size', type=int, default=argparse.SUPPRESS, help='Batch size for validation')
     parser.add_argument('--num_gpus', type=int, default=argparse.SUPPRESS, help='Number of GPUs to use')
@@ -58,6 +59,7 @@ def parse_hybrid_args():
         "output_dir": "outputs",
         "run_name": "default_run",
         "epochs": 50,
+        "num_samples":None,
         "batch_size": 8,
         "val_batch_size": 8,
         "num_gpus": 1,

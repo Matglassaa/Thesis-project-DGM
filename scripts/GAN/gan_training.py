@@ -123,6 +123,7 @@ def main():
     
     dataset = partial(FaciesDataset,
                       h5_path=config['data_file'],
+                      num_samples = config['num_samples'],
                       save_mapping_dir=run_dir,
                       use_one_hot=use_one_hot,
                       dataset_name=dataset_name,

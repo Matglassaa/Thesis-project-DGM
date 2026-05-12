@@ -23,7 +23,7 @@ class FaciesDataset(Dataset):
         mapping (numpy.ndarray): Look-up array for fast forward mapping of facies values.
         reverse_mapping (dict): Dictionary mapping new values back to a representative raw value.
     """
-    def __init__(self, h5_path, nz=64, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, preload_ram=True, **kwargs):
+    def __init__(self, h5_path, num_samples, nz=64, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, preload_ram=True, **kwargs):
         """
         Initializes the FaciesDataset.
 
@@ -58,8 +58,9 @@ class FaciesDataset(Dataset):
             
             if self.preload_ram:
                 print(f"Loading entire dataset ({self.length} samples) into RAM. Please wait...")
-                self.data_cache = h5f['facies'][:, -nz:, :, :] # The [-n,:,:] loads the whole array from a specifc slice untill the top into RAM
-                print("Loading into RAM complete!\n")
+                self.data_cache = h5f['facies'][:num_samples, -nz:, :, :] # The [-n,:,:] loads the whole array from a specifc slice untill the top into RAM
+                num_loaded, depth, height, width = self.data_cache.shape
+                print(f"Loading {num_loaded} samples into RAM complete!\n")
         
         # Define mappings   
         if facies_mapping is None:

@@ -1,0 +1,11 @@
+{
+    "data_file": "/home/nfs/mtorresruhe/data/datasets/upper_plain_delta_1997_samples/samples.h5",
+    "output_dir": "/home/nfs/mtorresruhe/data/outputs/UPD_1997_samples_seed_43",
+    "run_name": "RUN_02_1997_samples_seed_43_25_epochs",
+    "epochs": 25,
+    "batch_size": 8,
+    "val_batch_size": 8,
+    "num_gpus": 2,
+    "disable_one_hot": true,
+    "validation_size": 0.1
+}

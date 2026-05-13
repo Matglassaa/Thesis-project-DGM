@@ -56,7 +56,7 @@ def main():
     # Model configuration
     model_name = 'architecture_4_dcgan'
     nz = 100
-    nl = (4, 6, 6)
+    nl = (3, 5, 5)
     
     use_one_hot = not config['disable_one_hot']
     nc = 3 if use_one_hot else 1

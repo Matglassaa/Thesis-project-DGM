@@ -1,0 +1,12 @@
+{
+    "data_file": "/home/nfs/mtorresruhe/data/datasets/training_dataset_upper_plain_delta_128/training_datset_upper_plane_delta.h5",
+    "output_dir": "/home/nfs/mtorresruhe/data/outputs/UPD_2000_samples_128xy_seed_43",
+    "run_name": "RUN_2000_samples_128xy_dataset_50_epochs",
+    "epochs": 50,
+    "num_samples": 2000,
+    "batch_size": 32,
+    "val_batch_size": 16,
+    "num_gpus": 2,
+    "disable_one_hot": true,
+    "validation_size": 0.1
+}

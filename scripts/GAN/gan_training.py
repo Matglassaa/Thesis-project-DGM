@@ -85,7 +85,7 @@ def main():
                             use_double_conv=False, use_double_resblocks=False,
                             use_attention=False)
 
-    optimizer_generator = partial(optim.Adam, lr=2e-4, betas=(0., 0.99))
+    optimizer_generator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
     optimizer_discriminator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
     
     loss_generator = nn.BCEWithLogitsLoss()
@@ -140,7 +140,7 @@ def main():
                         discriminator,
                         output_dir_path=run_dir,
                         output_label=output_label,
-                        verbose=1,
+                        verbose=2,
                         num_gpus=config['num_gpus'],
                         num_nodes=1,
                         distributed=False,

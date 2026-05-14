@@ -28,6 +28,7 @@ sdist/
 var/
 wheels/
 outputs/
+datasets/
 share/python-wheels/
 *.egg-info/
 .installed.cfg

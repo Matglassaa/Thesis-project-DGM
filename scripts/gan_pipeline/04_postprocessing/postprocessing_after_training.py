@@ -12,6 +12,7 @@ import os
 import pathlib
 import glob
 import json
+import random
 import numpy as np
 
 import matplotlib.pyplot as plt
@@ -25,10 +26,14 @@ from skimage.util import view_as_windows
 from collections import Counter
 
 class PostProcessing1:
-    def __init__(self, real_path, gan_path, num_samples=10):
+    """
+    
+    """
+    def __init__(self, output_dir, real_path, gan_path, num_samples=10):
         """
         Initializes the PostProcessing1 class by loading file paths for real and GAN-generated samples.
         """
+        self.output_dir = output_dir
         self.script_path = pathlib.Path(__file__).resolve()
         self.cwd = pathlib.Path().resolve()
         self.path = os.path.relpath(self.script_path, self.cwd)
@@ -40,10 +45,11 @@ class PostProcessing1:
         self.num_samples = min(num_samples, len(self.real_files), len(self.gan_files))
 
     def _load_real(self, file):
+        """
+        Loads the facies array and maps real labels to representative facies [1, 4, 8].
+        """
         data = np.load(file)
-
         mapped_data = np.zeros_like(data)
-        
         mapped_data[(data >= 0) & (data < 4)] = 1
         mapped_data[(data >= 4) & (data < 8)] = 4
         mapped_data[(data >= 8)] = 8
@@ -92,7 +98,7 @@ class PostProcessing1:
         # Remove the background (ID 0)
         return blob_sizes[1:] 
     
-    def plot_entropy_matrix_helper(slices_stack, slice_indices, axis_name, xlabel, ylabel, output_directory, data_dir, num_files):
+    def _plot_entropy_matrix_helper(self, slices_stack, slice_indices, axis_name, xlabel, ylabel, output_directory, data_dir, num_files):
         """
         Helper function to calculate and plot the entropy matrices for a given set of slices.
         
@@ -146,7 +152,7 @@ class PostProcessing1:
         plt.close(fig)
         print(f"Saved {plane} entropy plot to: {plot_path}")
 
-    def plot_entropy(data_dir, output_dir, all_files, num_files):
+    def plot_entropy(self, data_dir, output_dir, all_files, num_files):
         """
         Samples a subset of files and plots the cell-wise entropy across multiple slices
         for X, Y, and Z planes to measure variability among realizations.
@@ -162,7 +168,7 @@ class PostProcessing1:
         sampled_files = random.sample(all_files, num_to_sample)
         
         first_file_path = os.path.join(data_dir, sampled_files[0])
-        sample_data = load_files(first_file_path)
+        sample_data = self._load_gan(first_file_path)
         max_z, ny, nx = sample_data.shape
         
         random_z_slices = sorted(random.sample(range(max_z), 9))
@@ -176,7 +182,7 @@ class PostProcessing1:
         valid_count = 0
         for file in sampled_files:
             try:
-                data_3d = load_files(os.path.join(data_dir, file)) 
+                data_3d = self._load_gan(os.path.join(data_dir, file)) 
                 if data_3d.size == 0 or data_3d.shape[0] == 0:
                     continue
                 
@@ -192,9 +198,9 @@ class PostProcessing1:
         stack_zx = stack_zx[:valid_count]
         stack_zy = stack_zy[:valid_count]
         
-        plot_entropy_matrix_helper(stack_xy, random_z_slices, 'Z', 'X', 'Y', output_dir, data_dir, valid_count)
-        plot_entropy_matrix_helper(stack_zx, random_y_slices, 'Y', 'X', 'Z', output_dir, data_dir, valid_count)
-        plot_entropy_matrix_helper(stack_zy, random_x_slices, 'X', 'Y', 'Z', output_dir, data_dir, valid_count)
+        self.plot_entropy_matrix_helper(stack_xy, random_z_slices, 'Z', 'X', 'Y', output_dir, data_dir, valid_count)
+        self.plot_entropy_matrix_helper(stack_zx, random_y_slices, 'Y', 'X', 'Z', output_dir, data_dir, valid_count)
+        self.plot_entropy_matrix_helper(stack_zy, random_x_slices, 'X', 'Y', 'Z', output_dir, data_dir, valid_count)
 
     def connectivity_and_pattern_analysis(self, target_val=1):
         """

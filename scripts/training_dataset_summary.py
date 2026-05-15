@@ -21,9 +21,9 @@ from custom_plots import apply_custom_plotting_flavor
 def parse_args():
     """Parses command line arguments."""
     parser = argparse.ArgumentParser(description="Generate all training sample visualizations.")
-    parser.add_argument('--data_dir', type=str, default='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_32_corrected_nz/realizations', help='Path to the .npz dataset directory')
-    parser.add_argument('--output_dir', type=str, default='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_32_corrected_nz', help='Path to save plots (default: data_dir/plots)')
-    parser.add_argument('--num_files', type=int, default=990, help='Number of files to sample for slice and entropy plots')
+    parser.add_argument('--data_dir', type=str, default='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_32_equal_lr/realizations', help='Path to the .npz dataset directory')
+    parser.add_argument('--output_dir', type=str, default='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_32_equal_lr', help='Path to save plots (default: data_dir/plots)')
+    parser.add_argument('--num_files', type=int, default=100, help='Number of files to sample for slice and entropy plots')
     parser.add_argument('--x_slice', type=int, default=None, help='X-index for orthogonal slice plot. Defaults to middle.')
     parser.add_argument('--y_slice', type=int, default=None, help='Y-index for orthogonal slice plot. Defaults to middle.')
     parser.add_argument('--z_slice', type=int, default=None, help='Z-index for orthogonal slice plot. Defaults to middle.')

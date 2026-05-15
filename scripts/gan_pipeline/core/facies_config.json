@@ -1,0 +1,72 @@
+{
+    "undefined": {
+        "val": 0,
+        "color": "#ff0000",
+        "description": "Background/Undefined"
+    },
+    "channel_lag": {
+        "val": 1,
+        "color": "#f1970f",
+        "description": "Active channel fill, coarse-grained"
+    },
+    "point_bar": {
+        "val": 2,
+        "color": "#f3dd12",
+        "description": "Lower energy channel margins"
+    },
+    "sand_plug": {
+        "val": 3,
+        "color": "#af8f00",
+        "description": "Fine-grained oxbow/plug fill"
+    },
+    "crevasse_splay_core": {
+        "val": 4,
+        "color": "#fffc65",
+        "description": "Proximal high-energy splay"
+    },
+    "crevasse_channel": {
+        "val": 5,
+        "color": "#ffd986",
+        "description": "Feeder channel for splays"
+    },
+    "crevasse_splay_delta": {
+        "val": 6,
+        "color": "#ff9853",
+        "description": "Distal fan-like splay deposit"
+    },
+    "levee": {
+        "val": 7,
+        "color": "#27ae60",
+        "description": "Sand/silt ridges bordering channel"
+    },
+    "overbank": {
+        "val": 8,
+        "color": "#33ff00",
+        "description": "Stabilized/vegetated levee"
+    },
+    "mud_plug": {
+        "val": 9,
+        "color": "#fff7db",
+        "description": "Fine silts/clays far from channel"
+    },
+    "hemipelagic_plug": {
+        "val": 10,
+        "color": "#7a7d80",
+        "description": "Silts near active channel belts"
+    },
+    "wetland": {
+        "val": 11,
+        "color": "#d862f0",
+        "description": "Organic rich, very fine sediment"
+    },
+    "draping": {
+        "val": 12,
+        "color": "#8dd5e7",
+        "description": "Lateral accretion sand bodies"
+    },
+    "pelagic": {
+        "val": 13,
+        "color": "#3498db",
+        "description": "Lacustrine clay/silt"
+    }
+}

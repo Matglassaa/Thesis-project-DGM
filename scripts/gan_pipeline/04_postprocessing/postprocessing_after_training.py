@@ -76,7 +76,7 @@ class PostProcessing1:
 
         return mapping[class_indices]
     
-    def _create_colormap_and_legend():
+    def _create_colormap_and_legend(self):
         """
         Creates a ListedColormap and legend patches based on facies_properties.
         
@@ -261,15 +261,15 @@ class PostProcessing1:
             print(f"Real ensemble median blob size: {np.median(all_real_blob_sizes)} voxels")
             print(f"GAN ensemble median blob size: {np.median(all_gan_blob_sizes)} voxels")
     
-    def plot_3d_pyvista(self, data_dir, output_dir, all_files):
+    def plot_3d_pyvista(self):
         """
         Renders a 3D volumetric plot of a random sample using PyVista.
-        
-        Args:
-            data_dir (str): Directory containing the .npz files.
-            output_dir (str): Directory to save the resulting plot.
-            all_files (list): List of all .npz file names.
+        Generates 3 subplots in one image, each showing only one of the facies (1, 4, 8).
         """
+        import os
+        import glob
+        import random
+        
         print("\n--- Generating 3D PyVista Plot ---")
         try:
             import pyvista as pv
@@ -277,10 +277,13 @@ class PostProcessing1:
             print("Error: 'pyvista' is not installed. Skipping 3D plot.")
             return
 
-        file_to_plot = random.choice(all_files)
-        file_path = os.path.join(data_dir, file_to_plot)
-        data_3d = self._load_gan(file_path)
+        npy_files = [f for f in self.gan_files if f.endswith(".npy")]
 
+        if npy_files:
+            random_file = random.choice(npy_files)
+        else:
+            raise FileNotFoundError("No .npy files found in self.gan_files list.")
+        data_3d = self._load_gan(random_file)
         nz, ny, nx = data_3d.shape
 
         grid = pv.ImageData()
@@ -288,28 +291,52 @@ class PostProcessing1:
 
         grid.point_data['Facies'] = data_3d.transpose(2, 1, 0).flatten(order='F')
 
+        facies_to_plot = [1, 4, 8]
+        facies_titles = {1: "Channel", 4: "Crevasse Splay/Levee", 8: "Floodplain"}
+        
         custom_cmap, _ = self._create_colormap_and_legend()
 
-        plotter = pv.Plotter(off_screen=True)
-        plotter.add_volume(grid, scalars='Facies', cmap=custom_cmap, clim=[0, 13])
+        plotter = pv.Plotter(shape=(1, 3), off_screen=True, window_size=(1800, 600))
 
-        plot_path = os.path.join(output_dir, f"3d_plot_{os.path.splitext(file_to_plot)[0]}.png")
+        for i, f_val in enumerate(facies_to_plot):
+            plotter.subplot(0, i)
+            plotter.add_text(facies_titles[f_val], font_size=14)
+
+            # Threshold to only include the current facies
+            threshed = grid.threshold([f_val - 0.5, f_val + 0.5], scalars='Facies')
+
+            if threshed.n_points > 0:
+                plotter.add_mesh(
+                    threshed, 
+                    scalars = 'Facies',
+                    cmap=custom_cmap, 
+                    clim=[0, 13],
+                    show_edges=False, 
+                    show_scalar_bar=False
+                )
+
+            plotter.view_isometric()
+
+        plot_path = os.path.join(self.output_dir, f"3d_plot_{os.path.splitext(os.path.basename(random_file))[0]}_facies.png")
         plotter.show(screenshot=plot_path)
-        print(f"Saved 3D plot to: {plot_path}")
+        print(f"Saved 3D plot to: {plot_path}") 
 
 if __name__ == "__main__":
     validator = PostProcessing1(
         output_dir='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020',
         real_path='datasets/training/training_dataset_upper_plain_delta_128/*.npy',
         gan_path='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020/realizations/*.npy',
-        num_samples=10
+        num_samples=0
     )
 
     # Apply custom plotting flavor for all plots generated in this script
     apply_custom_plotting_flavor()
     
     # Processes 10 samples (subset)
-    validator.connectivity_and_pattern_analysis(target_val=1)
+    #validator.connectivity_and_pattern_analysis(target_val=1)
     
     # Processes ALL samples (full ensemble)
-    validator.plot_entropy()
+    #validator.plot_entropy()
+
+    # Generate 3D plot for a random sample
+    validator.plot_3d_pyvista()

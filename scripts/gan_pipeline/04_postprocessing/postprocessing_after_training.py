@@ -171,6 +171,83 @@ class PostProcessing1:
         plt.close(fig)
         print(f"Saved {plane} entropy plot to: {plot_path}")
 
+    def plot_facies_percentages(self):
+        """
+        Calculates and plots the percentage distribution of each facies 
+        for a randomly selected generated realization.
+        """
+
+        print("\n--- Generating Facies Percentage Plot ---")
+        
+        npy_files = [f for f in self.gan_files if f.endswith(".npy")]
+        if not npy_files:
+            print("Error: No .npy files found in self.gan_files list.")
+            return
+            
+        random_file = random.choice(npy_files)
+        data_3d = self._load_gan(random_file)
+        
+        # Verify dimensions
+        nz, ny, nx = data_3d.shape
+        total_voxels = nz * ny * nx
+        
+        # The specific facies we want to plot
+        target_facies = [1, 4, 8]
+        colors = []
+        labels = []
+
+        try:
+            with open('scripts/gan_pipeline/core/facies_config.json', 'r') as f:
+                facies_properties = json.load(f)
+                
+            # Iterate through JSON and grab only our target values
+            # We sort it by 'val' first to ensure the order is strictly 1, 4, then 8
+            sorted_items = sorted(facies_properties.items(), key=lambda x: x[1]['val'])
+            for name, info in sorted_items:
+                if info['val'] in target_facies:
+                    colors.append(info['color'])
+                    # Optional: Use custom names instead of JSON keys if preferred
+                    if info['val'] == 1: labels.append("Channel")
+                    elif info['val'] == 4: labels.append("Crevasse Splay/Levee")
+                    elif info['val'] == 8: labels.append("Floodplain")
+        except Exception as e:
+            print(f"Error loading JSON, using fallbacks. Error: {e}")
+            colors = ['#f1970f', '#fffc65', '#33ff00'] # Fallback hex codes from your JSON
+            labels = ["Channel", "Crevasse Splay/Levee", "Floodplain"]
+
+        # Calculate percentages
+        percentages = []
+        for f_val in target_facies:
+            count = np.sum(data_3d == f_val)
+            pct = (count / total_voxels) * 100
+            percentages.append(pct)
+            
+        # Generate the Bar Chart
+        fig, ax = plt.subplots(figsize=(8, 6))
+        
+        # Now colors, labels, and percentages all have exactly 3 items!
+        bars = ax.bar(labels, percentages, color=colors, edgecolor='black', linewidth=1.2)
+        
+        # Formatting
+        ax.set_ylabel('Volume Percentage (%)', fontsize=12)
+        ax.set_title(f'Facies Distribution (Grid Size: {nx}x{ny}x{nz})', fontsize=14, pad=15)
+        ax.set_ylim(0, 100)
+        
+        # Add exact percentage labels on top of each bar
+        for bar in bars:
+            yval = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2, yval + 2, 
+                    f'{yval:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
+            
+        # Save the plot
+        base_name = os.path.splitext(os.path.basename(random_file))[0]
+        plot_path = os.path.join(self.output_dir, f"facies_percentages_{base_name}.png")
+        
+        plt.savefig(plot_path, bbox_inches='tight', dpi=300)
+        plt.close(fig)
+        
+        print(f"Saved facies percentage plot to: {plot_path}")
+
     def plot_entropy(self):
         """
         Calculates and plots cell-wise entropy across ALL loaded GAN realizations.
@@ -266,9 +343,6 @@ class PostProcessing1:
         Renders a 3D volumetric plot of a random sample using PyVista.
         Generates 3 subplots in one image, each showing only one of the facies (1, 4, 8).
         """
-        import os
-        import glob
-        import random
         
         print("\n--- Generating 3D PyVista Plot ---")
         try:
@@ -287,21 +361,21 @@ class PostProcessing1:
         nz, ny, nx = data_3d.shape
 
         grid = pv.ImageData()
-        grid.dimensions = (nx, ny, nz)
+        grid.dimensions = (nx + 1, ny + 1, nz + 1)
 
-        grid.point_data['Facies'] = data_3d.transpose(2, 1, 0).flatten(order='F')
+        grid.cell_data['Facies'] = data_3d.transpose(2, 1, 0).flatten(order='F')
 
         facies_to_plot = [1, 4, 8]
         facies_titles = {1: "Channel", 4: "Crevasse Splay/Levee", 8: "Floodplain"}
         
         custom_cmap, _ = self._create_colormap_and_legend()
 
-        plotter = pv.Plotter(shape=(1, 3), off_screen=True, window_size=(1800, 600))
+        plotter = pv.Plotter(shape=(1, 3), image_scale=4, off_screen=True, window_size=(7200, 2400))
 
         for i, f_val in enumerate(facies_to_plot):
             plotter.subplot(0, i)
-            plotter.add_text(facies_titles[f_val], font_size=14)
-
+            plotter.add_text(facies_titles[f_val], font_size=200, color='black', shadow=True)
+            
             # Threshold to only include the current facies
             threshed = grid.threshold([f_val - 0.5, f_val + 0.5], scalars='Facies')
 
@@ -312,9 +386,12 @@ class PostProcessing1:
                     cmap=custom_cmap, 
                     clim=[0, 13],
                     show_edges=False, 
-                    show_scalar_bar=False
+                    show_scalar_bar=False,
+                    ambient=0.2,
+                    diffuse=0.8
                 )
 
+            #plotter.enable_depth_of_field()
             plotter.view_isometric()
 
         plot_path = os.path.join(self.output_dir, f"3d_plot_{os.path.splitext(os.path.basename(random_file))[0]}_facies.png")
@@ -331,6 +408,9 @@ if __name__ == "__main__":
 
     # Apply custom plotting flavor for all plots generated in this script
     apply_custom_plotting_flavor()
+
+    # Plot the percentage distribution of facies for a random generated sample
+    #validator.plot_facies_percentages()
     
     # Processes 10 samples (subset)
     #validator.connectivity_and_pattern_analysis(target_val=1)

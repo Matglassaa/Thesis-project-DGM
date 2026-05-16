@@ -97,7 +97,7 @@ def main():
     # Validation
     metric_params = dict(n_levels=3,
                          n_descriptors=1024,
-                         descriptor_size=(3, 7, 7),
+                         descriptor_size=(4, 7, 7),
                          n_repeat=12,
                          n_proj=256,
                          padding_mode='circular', 

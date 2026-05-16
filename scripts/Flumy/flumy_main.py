@@ -20,7 +20,7 @@ def os_check():
 
     if os.name == 'nt':  # Windows
         FLUMY_EXE_DIR = FLUMY_EXE_DIR_WINDWOWS
-        BASE_PATH = os.path.join(os.getcwd(), 'data','datasets')
+        BASE_PATH = os.path.join(os.getcwd(),'datasets','testing')
 
     else:  # Linux
         FLUMY_EXE_DIR = "/home/nfs/mtorresruhe/software/flumy/bin"
@@ -30,9 +30,9 @@ def os_check():
 
     return FLUMY_EXE_DIR, BASE_PATH
 
-def main(output_dir= "test_outputs", test_dir= "test_temp", 
-         num_samples=10000, start_count=1, base_seed=0, use_parallel=True, 
-         n_jobs=32, save_format='npy', save_all_data=False):
+def main(output_dir= "testing_dataset_upper_plain_delta_128", test_dir= "test_temp", 
+         num_samples=100, start_count=10000, base_seed=0, use_parallel=True, 
+         n_jobs=16, save_format='npy', save_all_data=False):
     
     # adjust n_jobs if num_samples < n_jobs to avoid overhead
     if num_samples < n_jobs:

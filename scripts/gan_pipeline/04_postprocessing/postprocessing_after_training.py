@@ -25,24 +25,28 @@ from scipy.ndimage import label
 from skimage.util import view_as_windows
 from collections import Counter
 
+# Import custom utilities
+from custom_plots import apply_custom_plotting_flavor
+
 class PostProcessing1:
     """
     
     """
     def __init__(self, output_dir, real_path, gan_path, num_samples=10):
         """
-        Initializes the PostProcessing1 class by loading file paths for real and GAN-generated samples.
+        Initializes the class by loading ALL file paths.
         """
         self.output_dir = output_dir
         self.script_path = pathlib.Path(__file__).resolve()
         self.cwd = pathlib.Path().resolve()
-        self.path = os.path.relpath(self.script_path, self.cwd)
-        self.real_files = glob.glob(real_path)[:num_samples]
-        self.gan_files = glob.glob(gan_path)[:num_samples]
-        self.facies_mapping = {0: 1, 1: 4, 2: 8}
         
-        # Store num_samples dynamically based on what was actually found
+        # Load ALL available file paths
+        self.real_files = sorted(glob.glob(real_path))
+        self.gan_files = sorted(glob.glob(gan_path))
+        
+        # Subset limit for connectivity analysis
         self.num_samples = min(num_samples, len(self.real_files), len(self.gan_files))
+        self.facies_mapping = {0: 1, 1: 4, 2: 8}
 
     def _load_real(self, file):
         """
@@ -71,6 +75,31 @@ class PostProcessing1:
         mapping = np.array([1, 4, 8])
 
         return mapping[class_indices]
+    
+    def _create_colormap_and_legend():
+        """
+        Creates a ListedColormap and legend patches based on facies_properties.
+        
+        Returns:
+            tuple: A tuple containing the custom colormap and a list of legend patches.
+        """
+
+        try:
+            with open('scripts/gan_pipeline/core/facies_config.json','r') as f:
+                facies_properties = json.load(f)
+        except Exception as e:
+            print(f"FileNotFound: Error loading facies configuration: {e}")
+            return None, None
+        
+        sorted_facies = sorted(facies_properties.items(), key=lambda item: item[1]['val'])
+        color_list = [item[1]['color'] for item in sorted_facies]
+        custom_cmap = ListedColormap(color_list)
+        
+        legend_patches = [
+            mpatches.Patch(color=info['color'], label=name.replace('_', ' ').title()) 
+            for name, info in sorted_facies
+        ]
+        return custom_cmap, legend_patches
 
     def get_pattern_counts(self, data_array, template_size=(3, 3, 3)):
         """
@@ -98,109 +127,88 @@ class PostProcessing1:
         # Remove the background (ID 0)
         return blob_sizes[1:] 
     
-    def _plot_entropy_matrix_helper(self, slices_stack, slice_indices, axis_name, xlabel, ylabel, output_directory, data_dir, num_files):
+    def _plot_entropy_matrix_helper(self, slices_stack, slice_indices, axis_name, xlabel, ylabel, data_dir, num_files):
         """
-        Helper function to calculate and plot the entropy matrices for a given set of slices.
-        
-        Args:
-            slices_stack (np.ndarray): 3D array of stacked slices from multiple realizations.
-            slice_indices (list): List of slice indices to plot.
-            axis_name (str): Name of the axis ('X', 'Y', or 'Z') being sliced.
-            xlabel (str): Label for the X-axis of the plot.
-            ylabel (str): Label for the Y-axis of the plot.
-            output_directory (str): Directory to save the plot.
-            data_dir (str): Original data directory (used for naming the output file).
-            num_files (int): Number of sampled realizations.
+        Helper function to calculate and plot the entropy matrices with dynamic titling.
         """
-        path_to_facies_config = os.path.join(self.cwd,'scripts','gan_pipeline','core','facies_config.json')
-        with open(path_to_facies_config, 'r') as json_file:
-            facies_config = json.load(json_file)
-
         num_realizations, _, dim_y, dim_x = slices_stack.shape
-        num_facies = len(facies_config)
+        facies_values = [1, 4, 8]
         
-        vmin, vmax = 0, 3.0 
+        vmin, vmax = 0, 1.6 # Max log2(3) ≈ 1.58
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 
         fig, axes = plt.subplots(3, 3, figsize=(15, 12))
         axes = axes.flatten()
 
         for idx, slice_val in enumerate(slice_indices):
-            probabilities = np.zeros((num_facies, dim_y, dim_x))
-            for f_val in range(num_facies):
-                probabilities[f_val] = np.sum(slices_stack[:, idx, :, :] == f_val, axis=0) / num_realizations
+            probs = np.zeros((len(facies_values), dim_y, dim_x))
+            for i, f_val in enumerate(facies_values):
+                probs[i] = np.sum(slices_stack[:, idx, :, :] == f_val, axis=0) / num_realizations
 
-            entropy_map = entropy(probabilities, base=2, axis=0)
+            entropy_map = entropy(probs, base=2, axis=0)
             im = axes[idx].imshow(entropy_map, cmap='magma', origin='lower', norm=norm)
-            
             axes[idx].set_title(f"{axis_name}-Slice = {slice_val}", fontsize=12)
             axes[idx].set_xlabel(xlabel)
             axes[idx].set_ylabel(ylabel)
 
+        # Formatting titles and colorbars
         fig.subplots_adjust(right=0.85)
         cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
-        cbar = fig.colorbar(im, cax=cbar_ax)
-        cbar.set_label('Entropy (bits)', rotation=270, labelpad=15)
+        fig.colorbar(im, cax=cbar_ax).set_label('Entropy (bits)', rotation=270, labelpad=15)
 
+        # Dynamic naming as requested
         plane_names = {'Z': 'XY', 'Y': 'ZX', 'X': 'ZY'}
         plane = plane_names[axis_name]
-        plt.suptitle(f"{plane} Plane Cell-Wise Entropy (Fixed Scale: {vmin}-{vmax} bits)\n({num_files} Realizations)", fontsize=16)
+        
+        plt.suptitle(f"{plane} Plane Cell-Wise Entropy (Fixed Scale: {vmin}-{vmax} bits)\n"
+                     f"({num_files} Realizations)", fontsize=16)
 
+        # File naming logic
         dataset_name = os.path.basename(os.path.normpath(data_dir))
-        plot_path = os.path.join(output_directory, f"entropy_matrix_{plane}_{dataset_name}_{num_files}_samples.png")
-        plt.savefig(plot_path, bbox_inches='tight', dpi=300)
+        plot_path = os.path.join(self.output_dir, f"entropy_matrix_{plane}_{dataset_name}_{num_files}_samples.png")
+        
+        plt.savefig(plot_path, bbox_inches='tight', dpi=600)
         plt.close(fig)
         print(f"Saved {plane} entropy plot to: {plot_path}")
 
-    def plot_entropy(self, data_dir, output_dir, all_files, num_files):
+    def plot_entropy(self):
         """
-        Samples a subset of files and plots the cell-wise entropy across multiple slices
-        for X, Y, and Z planes to measure variability among realizations.
-        
-        Args:
-            data_dir (str): Directory containing the .npz files.
-            output_dir (str): Directory to save the resulting plots.
-            all_files (list): List of all .npz file names.
-            num_files (int): Number of realizations to sample.
+        Calculates and plots cell-wise entropy across ALL loaded GAN realizations.
         """
-        print("\n--- Generating Entropy Matrices ---")
-        num_to_sample = min(num_files, len(all_files))
-        sampled_files = random.sample(all_files, num_to_sample)
+        num_total = len(self.gan_files)
+        print(f"\n--- Generating Entropy Matrices ({num_total} Realizations) ---")
         
-        first_file_path = os.path.join(data_dir, sampled_files[0])
-        sample_data = self._load_gan(first_file_path)
-        max_z, ny, nx = sample_data.shape
+        if num_total == 0:
+            print("No GAN files found.")
+            return
+
+        # Determine the data directory name for the output file naming
+        data_dir = os.path.dirname(self.gan_files[0])
+
+        # Load dimensions from the first realization
+        sample_data = self._load_gan(self.gan_files[0])
+        nz, ny, nx = sample_data.shape
         
-        random_z_slices = sorted(random.sample(range(max_z), 9))
-        random_y_slices = sorted(random.sample(range(ny), 9))
-        random_x_slices = sorted(random.sample(range(nx), 9))
+        # Sample 9 consistent slices for visualization
+        z_slices = sorted(random.sample(range(nz), 9))
+        y_slices = sorted(random.sample(range(ny), 9))
+        x_slices = sorted(random.sample(range(nx), 9))
 
-        stack_xy = np.zeros((num_to_sample, 9, ny, nx), dtype=np.uint8) 
-        stack_zx = np.zeros((num_to_sample, 9, max_z, nx), dtype=np.uint8) 
-        stack_zy = np.zeros((num_to_sample, 9, max_z, ny), dtype=np.uint8) 
+        # Stacks for the entire ensemble
+        stack_xy = np.zeros((num_total, 9, ny, nx), dtype=np.uint8) 
+        stack_zx = np.zeros((num_total, 9, nz, nx), dtype=np.uint8) 
+        stack_zy = np.zeros((num_total, 9, nz, ny), dtype=np.uint8) 
 
-        valid_count = 0
-        for file in sampled_files:
-            try:
-                data_3d = self._load_gan(os.path.join(data_dir, file)) 
-                if data_3d.size == 0 or data_3d.shape[0] == 0:
-                    continue
-                
-                stack_xy[valid_count] = data_3d[random_z_slices, :, :]
-                stack_zx[valid_count] = data_3d[:, random_y_slices, :].swapaxes(0, 1)
-                stack_zy[valid_count] = data_3d[:, :, random_x_slices].transpose(2, 0, 1)
-                valid_count += 1
-            except Exception as e:
-                print(f"Error loading {file}: {e}")
-                continue
+        for i, file_path in enumerate(self.gan_files):
+            data_3d = self._load_gan(file_path)
+            stack_xy[i] = data_3d[z_slices, :, :]
+            stack_zx[i] = data_3d[:, y_slices, :].swapaxes(0, 1)
+            stack_zy[i] = data_3d[:, :, x_slices].transpose(2, 0, 1)
 
-        stack_xy = stack_xy[:valid_count]
-        stack_zx = stack_zx[:valid_count]
-        stack_zy = stack_zy[:valid_count]
-        
-        self.plot_entropy_matrix_helper(stack_xy, random_z_slices, 'Z', 'X', 'Y', output_dir, data_dir, valid_count)
-        self.plot_entropy_matrix_helper(stack_zx, random_y_slices, 'Y', 'X', 'Z', output_dir, data_dir, valid_count)
-        self.plot_entropy_matrix_helper(stack_zy, random_x_slices, 'X', 'Y', 'Z', output_dir, data_dir, valid_count)
+        # Call helper with the dataset path and total count
+        self._plot_entropy_matrix_helper(stack_xy, z_slices, 'Z', 'X', 'Y', data_dir, num_total)
+        self._plot_entropy_matrix_helper(stack_zx, y_slices, 'Y', 'X', 'Z', data_dir, num_total)
+        self._plot_entropy_matrix_helper(stack_zy, x_slices, 'X', 'Y', 'Z', data_dir, num_total)
 
     def connectivity_and_pattern_analysis(self, target_val=1):
         """
@@ -214,7 +222,6 @@ class PostProcessing1:
 
         print(f"Processing {self.num_samples} Real samples...")
         for i in range(self.num_samples):
-            # FIXED: Calling the internal method with self.
             real_data = self._load_real(self.real_files[i]) 
             
             # 1. Aggregate MPH Counts
@@ -228,7 +235,6 @@ class PostProcessing1:
 
         print(f"Processing {self.num_samples} GAN samples...")
         for i in range(self.num_samples):
-            # FIXED: Calling the internal method with self.
             gan_data = self._load_gan(self.gan_files[i]) 
             
             # 1. Aggregate MPH Counts
@@ -254,17 +260,56 @@ class PostProcessing1:
             
             print(f"Real ensemble median blob size: {np.median(all_real_blob_sizes)} voxels")
             print(f"GAN ensemble median blob size: {np.median(all_gan_blob_sizes)} voxels")
+    
+    def plot_3d_pyvista(self, data_dir, output_dir, all_files):
+        """
+        Renders a 3D volumetric plot of a random sample using PyVista.
+        
+        Args:
+            data_dir (str): Directory containing the .npz files.
+            output_dir (str): Directory to save the resulting plot.
+            all_files (list): List of all .npz file names.
+        """
+        print("\n--- Generating 3D PyVista Plot ---")
+        try:
+            import pyvista as pv
+        except ImportError:
+            print("Error: 'pyvista' is not installed. Skipping 3D plot.")
+            return
 
-# ==========================================
-# Execution Block
-# ==========================================
+        file_to_plot = random.choice(all_files)
+        file_path = os.path.join(data_dir, file_to_plot)
+        data_3d = self._load_gan(file_path)
+
+        nz, ny, nx = data_3d.shape
+
+        grid = pv.ImageData()
+        grid.dimensions = (nx, ny, nz)
+
+        grid.point_data['Facies'] = data_3d.transpose(2, 1, 0).flatten(order='F')
+
+        custom_cmap, _ = self._create_colormap_and_legend()
+
+        plotter = pv.Plotter(off_screen=True)
+        plotter.add_volume(grid, scalars='Facies', cmap=custom_cmap, clim=[0, 13])
+
+        plot_path = os.path.join(output_dir, f"3d_plot_{os.path.splitext(file_to_plot)[0]}.png")
+        plotter.show(screenshot=plot_path)
+        print(f"Saved 3D plot to: {plot_path}")
+
 if __name__ == "__main__":
-    # Initialize the class with your directory paths
     validator = PostProcessing1(
+        output_dir='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020',
         real_path='datasets/training/training_dataset_upper_plain_delta_128/*.npy',
-        gan_path='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_32_corrected_nz/realizations/*.npy',
+        gan_path='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020/realizations/*.npy',
         num_samples=10
     )
+
+    # Apply custom plotting flavor for all plots generated in this script
+    apply_custom_plotting_flavor()
     
-    # Run the specific analysis method
+    # Processes 10 samples (subset)
     validator.connectivity_and_pattern_analysis(target_val=1)
+    
+    # Processes ALL samples (full ensemble)
+    validator.plot_entropy()

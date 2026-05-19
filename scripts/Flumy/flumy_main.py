@@ -26,12 +26,12 @@ def os_check():
         FLUMY_EXE_DIR = "/home/nfs/mtorresruhe/software/flumy/bin"
         # This uses the symlink in your home dir automatically
         home_dir = os.path.expanduser("~") 
-        BASE_PATH = os.path.join(home_dir, 'data', 'flumy_r')
+        BASE_PATH = os.path.join(home_dir, 'data', 'datasets','training_dataset_upper_plain_delta_128')
 
     return FLUMY_EXE_DIR, BASE_PATH
 
-def main(output_dir= "testing_dataset_upper_plain_delta_128", test_dir= "test_temp", 
-         num_samples=100, start_count=10000, base_seed=0, use_parallel=True, 
+def main(output_dir= "testing_dataset_upper_plain_delta_128_2", test_dir= "test_temp", 
+         num_samples=10000, start_count=10000, base_seed=0, use_parallel=True, 
          n_jobs=16, save_format='npy', save_all_data=False):
     
     # adjust n_jobs if num_samples < n_jobs to avoid overhead

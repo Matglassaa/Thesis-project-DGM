@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument('--file_type', type=str, choices=['npz', 'npy'], default='npy', help='Type of input files (default: npz)')
     parser.add_argument('--plot_dir', type=str, default=None, help='Directory to save generated plots (default: same as output_file)')
     parser.add_argument('--num_plot_samples', type=int, default=10, help='Number of realizations to sample for the entropy plot')
+    parser.add_argument('--target_z', type=int, default=32, help='Target Z dimension. Larger arrays will be center-cropped.')
     
     return parser.parse_args()
 
@@ -33,6 +34,14 @@ def load_array(filepath, file_type):
         return np.load(filepath)['facies']
     else:
         return np.load(filepath) # .npy files return the array directly
+
+def center_crop_z(data, target_z):
+    """Crops the Z dimension (axis 0) to target_z by taking the middle slices."""
+    current_z = data.shape[0]
+    if current_z > target_z:
+        start_z = (current_z - target_z) // 2
+        return data[start_z : start_z + target_z, :, :]
+    return data
 
 def main():
     args = parse_args()
@@ -48,8 +57,10 @@ def main():
 
     print(f"Found {num_files} .{args.file_type} files. Starting conversion...")
 
-    # Load the first file to get the grid dimensions (Z, Y, X)
+    # Load the first file and apply the center crop to establish standard dimensions
     first_file = load_array(files[0], args.file_type)
+    first_file = center_crop_z(first_file, args.target_z)
+    
     grid_shape = first_file.shape
     dtype = first_file.dtype
 
@@ -65,7 +76,9 @@ def main():
 
         # Populate the dataset
         for i, file_path in enumerate(files):
-            dataset[i] = load_array(file_path, args.file_type)
+            data = load_array(file_path, args.file_type)
+            data = center_crop_z(data, args.target_z)
+            dataset[i] = data
             
             if (i + 1) % 500 == 0:
                 print(f"Processed {i + 1}/{num_files} files...")

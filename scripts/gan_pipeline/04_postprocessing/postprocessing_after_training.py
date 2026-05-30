@@ -56,25 +56,37 @@ class PostProcessing1:
         mapped_data = np.zeros_like(data)
         mapped_data[(data >= 0) & (data < 4)] = 1
         mapped_data[(data >= 4) & (data < 8)] = 4
+        
         mapped_data[(data >= 8)] = 8
         
         return mapped_data
 
-    def _load_gan(self, file):
+    def _load_gan_raw(self, file):
         """
-        Loads the facies array and maps GAN labels [-1, 0, 1] back to representative facies [1, 4, 8].
+        Loads the raw continuous GAN output array.
         """
         if file.endswith('.npz'):
             with np.load(file) as data:
                 arr = data['facies'] if 'facies' in data else data[data.files[0]]
         else:
             arr = np.load(file)
+        return arr
 
+    def _map_gan_to_facies(self, arr):
+        """
+        Maps continuous GAN labels [-1, 0, 1] to representative facies [1, 4, 8].
+        """
         class_indices = np.round(arr + 1).astype(int)
         class_indices = np.clip(class_indices, 0, 2)
         mapping = np.array([1, 4, 8])
-
         return mapping[class_indices]
+
+    def _load_gan(self, file):
+        """
+        Legacy wrapper to keep existing functions working.
+        """
+        raw_arr = self._load_gan_raw(file)
+        return self._map_gan_to_facies(raw_arr)
     
     def _create_colormap_and_legend(self):
         """
@@ -171,82 +183,97 @@ class PostProcessing1:
         plt.close(fig)
         print(f"Saved {plane} entropy plot to: {plot_path}")
 
-    def plot_facies_percentages(self):
+    def plot_facies_percentages(self, nc):
         """
-        Calculates and plots the percentage distribution of each facies 
-        for a randomly selected generated realization.
+        Calculates and plots the raw continuous distribution AND the discrete mapped 
+        percentage distribution of each facies over ALL GAN realizations.
         """
-
-        print("\n--- Generating Facies Percentage Plot ---")
+        print(f"\n--- Generating Facies Distribution Plots across {len(self.gan_files)} Realizations ---")
         
-        npy_files = [f for f in self.gan_files if f.endswith(".npy")]
-        if not npy_files:
-            print("Error: No .npy files found in self.gan_files list.")
+        if not self.gan_files:
+            print("Error: No GAN files found to process.")
             return
-            
-        random_file = random.choice(npy_files)
-        data_3d = self._load_gan(random_file)
-        
-        # Verify dimensions
-        nz, ny, nx = data_3d.shape
-        total_voxels = nz * ny * nx
-        
-        # The specific facies we want to plot
+
         target_facies = [1, 4, 8]
+        facies_counts = {1: 0, 4: 0, 8: 0}
+        total_voxels = 0
+        
+        # Setup bins for the raw continuous data histogram (assuming standard tanh output ~ -1.5 to 1.5)
+        raw_bins = np.linspace(-1.5, 1.5, 100)
+        raw_hist = np.zeros(len(raw_bins) - 1)
+
+        # 1. Iterate over ALL files, accumulating data incrementally to save RAM
+        for i, file_path in enumerate(self.gan_files):
+            # Load raw data once
+            raw_data = self._load_gan_raw(file_path)
+            
+            # Accumulate raw histogram
+            counts, _ = np.histogram(raw_data, bins=raw_bins)
+            raw_hist += counts
+            
+            # Map data and accumulate discrete counts
+            mapped_data = self._map_gan_to_facies(raw_data)
+            total_voxels += mapped_data.size
+            
+            for f_val in target_facies:
+                facies_counts[f_val] += np.sum(mapped_data == f_val)
+
+        # Calculate final percentages for discrete facies
+        percentages = [(facies_counts[f] / total_voxels) * 100 for f in target_facies]
+
+        # 2. Extract visualization metadata
         colors = []
         labels = []
-
         try:
             with open('scripts/gan_pipeline/core/facies_config.json', 'r') as f:
                 facies_properties = json.load(f)
                 
-            # Iterate through JSON and grab only our target values
-            # We sort it by 'val' first to ensure the order is strictly 1, 4, then 8
             sorted_items = sorted(facies_properties.items(), key=lambda x: x[1]['val'])
             for name, info in sorted_items:
                 if info['val'] in target_facies:
                     colors.append(info['color'])
-                    # Optional: Use custom names instead of JSON keys if preferred
                     if info['val'] == 1: labels.append("Channel")
                     elif info['val'] == 4: labels.append("Crevasse Splay/Levee")
                     elif info['val'] == 8: labels.append("Floodplain")
         except Exception as e:
             print(f"Error loading JSON, using fallbacks. Error: {e}")
-            colors = ['#f1970f', '#fffc65', '#33ff00'] # Fallback hex codes from your JSON
+            colors = ['#f1970f', '#fffc65', '#33ff00']
             labels = ["Channel", "Crevasse Splay/Levee", "Floodplain"]
 
-        # Calculate percentages
-        percentages = []
-        for f_val in target_facies:
-            count = np.sum(data_3d == f_val)
-            pct = (count / total_voxels) * 100
-            percentages.append(pct)
-            
-        # Generate the Bar Chart
-        fig, ax = plt.subplots(figsize=(8, 6))
+        # 3. Create a side-by-side plot
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
         
-        # Now colors, labels, and percentages all have exactly 3 items!
-        bars = ax.bar(labels, percentages, color=colors, edgecolor='black', linewidth=1.2)
+        # Plot A: Raw Continuous Distribution
+        bin_centers = 0.5 * (raw_bins[1:] + raw_bins[:-1])
+        # Normalize histogram to show density
+        raw_hist_density = raw_hist / (np.sum(raw_hist) * np.diff(raw_bins)) 
         
-        # Formatting
-        ax.set_ylabel('Volume Percentage (%)', fontsize=12)
-        ax.set_title(f'Facies Distribution (Grid Size: {nx}x{ny}x{nz})', fontsize=14, pad=15)
-        ax.set_ylim(0, 100)
+        axes[0].plot(bin_centers, raw_hist_density, color='blue', lw=2)
+        axes[0].fill_between(bin_centers, raw_hist_density, alpha=0.3, color='blue')
+        axes[0].set_title('Raw GAN Output Distribution', fontsize=14, pad=10)
+        axes[0].set_xlabel('Continuous Value (Raw)', fontsize=12)
+        axes[0].set_ylabel('Density', fontsize=12)
+        axes[0].grid(True, alpha=0.3)
+
+        # Plot B: Clipped/Mapped Percentage Distribution
+        bars = axes[1].bar(labels, percentages, color=colors, edgecolor='black', linewidth=1.2)
+        axes[1].set_title(f'Mapped Facies Distribution ({len(self.gan_files)} Samples)', fontsize=14, pad=10)
+        axes[1].set_ylabel('Volume Percentage (%)', fontsize=12)
+        axes[1].set_ylim(0, 100)
         
-        # Add exact percentage labels on top of each bar
         for bar in bars:
             yval = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2, yval + 2, 
-                    f'{yval:.1f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
-            
-        # Save the plot
-        base_name = os.path.splitext(os.path.basename(random_file))[0]
-        plot_path = os.path.join(self.output_dir, f"facies_percentages_{base_name}.png")
+            axes[1].text(bar.get_x() + bar.get_width()/2, yval + 2, 
+                    f'{yval:.2f}%', ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+        plt.tight_layout()
         
+        # Save the plot
+        plot_path = os.path.join(self.output_dir, f"facies_distributions_ensemble_{len(self.gan_files)}_samples.png")
         plt.savefig(plot_path, bbox_inches='tight', dpi=300)
         plt.close(fig)
         
-        print(f"Saved facies percentage plot to: {plot_path}")
+        print(f"Saved ensemble facies distribution plot to: {plot_path}")
 
     def plot_entropy(self):
         """
@@ -400,23 +427,23 @@ class PostProcessing1:
 
 if __name__ == "__main__":
     validator = PostProcessing1(
-        output_dir='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020',
+        output_dir='outputs/20000_training_samples/RUN_20000_samples_50_epochs_bs_64_val_size_010_one_hot_all',
         real_path='datasets/training/training_dataset_upper_plain_delta_128/*.npy',
-        gan_path='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020/realizations/*.npy',
-        num_samples=0
+        gan_path='outputs/20000_training_samples/RUN_20000_samples_50_epochs_bs_64_val_size_010_one_hot_all/realizations/*.npy',
+        num_samples=10
     )
 
     # Apply custom plotting flavor for all plots generated in this script
     apply_custom_plotting_flavor()
 
     # Plot the percentage distribution of facies for a random generated sample
-    #validator.plot_facies_percentages()
+    validator.plot_facies_percentages(nc=9)
     
     # Processes 10 samples (subset)
-    #validator.connectivity_and_pattern_analysis(target_val=1)
+    validator.connectivity_and_pattern_analysis(target_val=1)
     
     # Processes ALL samples (full ensemble)
-    #validator.plot_entropy()
+    validator.plot_entropy()
 
     # Generate 3D plot for a random sample
     validator.plot_3d_pyvista()

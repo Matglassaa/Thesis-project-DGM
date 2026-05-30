@@ -63,7 +63,17 @@ def apply_custom_plotting_flavor():
     plt.rcParams['font.size'] = 8
 
     plt.rcParams['figure.constrained_layout.use'] = False
-    plt.rcParams['figure.titlesize'] = 9
+
+    # Figure Title (Suptitle) formatting
+    plt.rcParams['figure.titlesize'] = 10       # Slightly larger than axes title
+    plt.rcParams['figure.titleweight'] = 'bold'  # Makes the main title stand out
+
+    # Axes Title formatting
+    plt.rcParams['axes.titlecolor'] = 'black'
+    plt.rcParams['axes.titlesize'] = 10
+    plt.rcParams['axes.titleweight'] = 'normal'  # 'bold', 'light', or 'normal'
+    plt.rcParams['axes.titlelocation'] = 'center'  # 'left', 'center', or 'right'
+    plt.rcParams['axes.titlepad'] = 6.0          # Padding between title and top spine
 
     # Axis and edge coloring
     plt.rcParams['axes.edgecolor'] = '#8C8C8C'
@@ -72,8 +82,6 @@ def apply_custom_plotting_flavor():
     plt.rcParams['axes.labelsize'] = 9
     plt.rcParams['axes.spines.right'] = False
     plt.rcParams['axes.spines.top'] = False
-    plt.rcParams['axes.titlecolor'] = 'black'
-    plt.rcParams['axes.titlesize'] = 9
     
     # Tick formatting
     plt.rcParams['xtick.color'] = '#8C8C8C'

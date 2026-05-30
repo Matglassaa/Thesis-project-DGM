@@ -23,57 +23,66 @@ class FaciesDataset(Dataset):
         mapping (numpy.ndarray): Look-up array for fast forward mapping of facies values.
         reverse_mapping (dict): Dictionary mapping new values back to a representative raw value.
     """
-    def __init__(self, h5_path, num_samples, nz=32, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, preload_ram=True, **kwargs):
+    def __init__(self, h5_path, num_samples, nz=32, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, one_hot_all=False, preload_ram=True, **kwargs):        
         """
-        Initializes the FaciesDataset.
+            Initializes the FaciesDataset.
 
-        Args:
-            h5_path (str): Path to the HDF5 file containing the 'facies' dataset.
-            nz (int, optional): The number of elements to slice from the end of the first 
-                dimension (e.g., depth or sequence). Defaults to 64.
-            facies_mapping (dict, optional): Dictionary defining a custom mapping from raw 
-                facies values to new class indices. If None, a default 3-class mapping is used. 
-                Defaults to None.
-            save_mapping_dir (str, optional): Directory path where the mapping configuration 
-                should be saved as a JSON file. Defaults to None.
-            use_one_hot (bool, optional): Whether to one-hot encode the processed data and scale 
-                it to [-1.0, 1.0]. Defaults to True.
-            preload_ram (bool, optional): Whether to load the targeted slice of the dataset 
-                into RAM upon initialization. Defaults to True.
-            **kwargs: Additional keyword arguments.
+            Args:
+                h5_path (str): Path to the HDF5 file containing the 'facies' dataset.
+                nz (int, optional): The number of elements to slice from the end of the first 
+                    dimension (e.g., depth or sequence). Defaults to 64.
+                facies_mapping (dict, optional): Dictionary defining a custom mapping from raw 
+                    facies values to new class indices. If None, a default 3-class mapping is used. 
+                    Defaults to None.
+                save_mapping_dir (str, optional): Directory path where the mapping configuration 
+                    should be saved as a JSON file. Defaults to None.
+                use_one_hot (bool, optional): Whether to one-hot encode the processed data and scale 
+                    it to [-1.0, 1.0]. Defaults to True.
+                preload_ram (bool, optional): Whether to load the targeted slice of the dataset 
+                    into RAM upon initialization. Defaults to True.
+                **kwargs: Additional keyword arguments.
 
-        Raises:
-            KeyError: If the 'facies' key is not found within the specified HDF5 file.
+            Raises:
+                KeyError: If the 'facies' key is not found within the specified HDF5 file.
         """
         self.h5_path = h5_path
         self.nz = nz
         self.use_one_hot = use_one_hot
+        self.one_hot_all = one_hot_all # New parameter
         self.preload_ram = preload_ram
         
-        with h5py.File(self.h5_path, 'r') as h5f:               # Open the HDF5 file to read metadata and optionally preload data into RAM
+        # Determine number of classes for one-hot encoding
+        self.num_classes = 9 if self.one_hot_all else 3
+        
+        with h5py.File(self.h5_path, 'r') as h5f:               
             if 'facies' not in h5f:
                 raise KeyError(f"Dataset 'facies' not found in {self.h5_path}")
             
             total_length = h5f['facies'].shape[0]
-            
-            if num_samples is not None:
-                self.length = min(num_samples, total_length)
-            else:
-                self.length = total_length
+            self.length = min(num_samples, total_length) if num_samples is not None else total_length
             
             if self.preload_ram:
                 print(f"Loading {self.length} samples into RAM. Please wait...")
-                self.data_cache = h5f['facies'][:self.length, -nz:, :, :] # Loads based on the strictly defined length
+                # Best Practice: Cast to uint8 here to save massive RAM if raw values are just 0-12
+                self.data_cache = h5f['facies'][:self.length, -nz:, :, :].astype(np.uint8) 
                 num_loaded, depth, height, width = self.data_cache.shape
                 print(f"Loading {num_loaded} samples into RAM complete!\n")
         
         # Define mappings   
         if facies_mapping is None:
-            self.mapping = np.zeros(13, dtype=np.int64)
-            self.mapping[1:4] = 0   
-            self.mapping[4:8] = 1   
-            self.mapping[8:13] = 2  
-            self.reverse_mapping = {0: 1, 1: 4, 2: 8}
+            if self.one_hot_all:
+                # Assuming raw facies values map directly to 0-8 for PyTorch one_hot requirements
+                # If your raw data is 1-9, you must shift it to 0-8. Example below:
+                self.mapping = np.arange(13, dtype=np.uint8) 
+                self.mapping[1:10] = np.arange(9) # Uncomment if raw values are 1-9
+                self.reverse_mapping = {i: i for i in range(9)}
+            else:
+                self.mapping = np.zeros(13, dtype=np.int64)
+                self.mapping[1:4] = 0   
+                self.mapping[4:8] = 1 
+                self.mapping[9] = 0  
+                self.mapping[[8, 10, 11, 12]] = 2
+                self.reverse_mapping = {0: 1, 1: 4, 2: 8}
         else:
             max_val = max(facies_mapping.keys())
             self.mapping = np.zeros(max_val + 1, dtype=np.int64)
@@ -127,16 +136,17 @@ class FaciesDataset(Dataset):
             data = self.data_cache[idx]
         else:
             with h5py.File(self.h5_path, 'r') as h5f:
-                data = h5f['facies'][idx]
+                data = h5f['facies'][idx].astype(np.uint8)
         
         mapped_data = self.mapping[data]
-        tensor_data = torch.from_numpy(mapped_data)
+        tensor_data = torch.from_numpy(mapped_data).long()
         
         if self.use_one_hot:
-            processed_data = F.one_hot(tensor_data, num_classes=3).permute(3, 0, 1, 2).float()
+            # Use dynamic self.num_classes instead of hardcoded 3
+            processed_data = F.one_hot(tensor_data, num_classes=self.num_classes).permute(3, 0, 1, 2).float()
             processed_data = (processed_data * 2.0) - 1.0
         else:
             processed_data = tensor_data.unsqueeze(0).float()
             processed_data = processed_data - 1.0
 
-        return {'data': processed_data}
+        return {'data': processed_data}   

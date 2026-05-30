@@ -11,14 +11,13 @@ from voxgan.networks import resnet
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
     parser.add_argument('--csv_path', type=str, default='outputs/2000_training_samples/RUN_2000_samples_128xy_dataset_50_epochs/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020/architecture_4_dcgan_training_datset_upper_plane_delta_no_one_hot_epochs_50_bs_64_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default=r'outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_64_val_size_020/realizations', help='Output folder')
-    parser.add_argument('--num_reals', type=int, default=1000, help='Number of realizations to generate')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/20000_training_samples/RUN_20000_samples_50_epochs_bs_64_val_size_010_one_hot_all/architecture_4_dcgan_samples_one_hot_epochs_50_bs_64_run_1.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default=r'outputs/20000_training_samples/RUN_20000_samples_50_epochs_bs_64_val_size_010_one_hot_all/realizations', help='Output folder')
+    parser.add_argument('--num_reals', type=int, default=100, help='Number of realizations to generate')
 
     return parser.parse_args()
 
 def plot_losses(csv_path, output_dir):
-
     if not os.path.exists(csv_path):
         print(f"Loss CSV not found at '{csv_path}'. Skipping loss visualization.")
         return
@@ -48,13 +47,20 @@ def plot_losses(csv_path, output_dir):
     plt.ylabel("D(x) and D(G(z))")
     plt.xlabel("Iteration")
 
-    # Subplot 3: MS-SWD Metric
+    # Subplot 3: MS-SWD Metric(s)
     plt.subplot(3, 1, 3)
-    if "MS-SWD" in loss.columns:
-        loss_max_iter = loss[loss["MS-SWD"].isna() == False]
-        if not loss_max_iter.empty:
-            plt.plot(loss_max_iter["iteration"], loss_max_iter["MS-SWD"], label="MS-SWD")
-    plt.legend()
+    
+    ms_swd_cols = [col for col in loss.columns if "ms-swd" in col.lower()]
+    
+    if ms_swd_cols:
+        for col in ms_swd_cols:
+            # Drop NaNs specifically for this column so plotting connects the lines properly
+            loss_valid = loss.dropna(subset=[col])
+            if not loss_valid.empty:
+                plt.plot(loss_valid["iteration"], loss_valid[col], marker="o", markersize=3, label=col)
+        
+        plt.legend()
+        
     plt.ylabel("MS-SWD")
     plt.xlabel("Iteration")
 
@@ -70,7 +76,7 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
         return
 
     nz = 100
-    nc = nc
+    nc = 9
     ngf = 64
     max_factor = 16
     nl = (3, 5, 5)
@@ -102,7 +108,7 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
     print("Success! Weights are perfectly aligned.")
 
     print(f"Generating {num_realizations} 3D River Block Realizations...")
-    for i in range(10,num_realizations):
+    for i in range(num_realizations):
         with torch.no_grad():
             z = torch.randn(1, nz).to(device)
             z_input = z.view(z.shape + (1, 1, 1))

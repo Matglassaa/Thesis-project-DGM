@@ -11,9 +11,9 @@ from voxgan.networks import resnet
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
     parser.add_argument('--csv_path', type=str, default='outputs/2000_training_samples/RUN_2000_samples_128xy_dataset_50_epochs/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_32_corrected_nz/architecture_4_dcgan_training_datset_upper_plane_delta_no_one_hot_epochs_50_bs_32_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default=r'outputs/10000_training_samples/RUN_10000_samples_128xy_dataset_50_epochs_bs_32_corrected_nz/realizations', help='Output folder')
-    parser.add_argument('--num_reals', type=int, default=990, help='Number of realizations to generate')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/20000_training_samples/RUN_10000_of_20000_samples_128xy_dataset_50_epochs_bs_64_val_size_020_double_conv/architecture_4_dcgan_training_datset_upper_plane_delta_20000_one_hot_epochs_50_bs_64_run_1.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default=r'outputs/20000_training_samples/RUN_10000_of_20000_samples_128xy_dataset_50_epochs_bs_64_val_size_020_double_conv/realizations', help='Output folder')
+    parser.add_argument('--num_reals', type=int, default=1000, help='Number of realizations to generate')
 
     return parser.parse_args()
 
@@ -70,7 +70,7 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
         return
 
     nz = 100
-    nc = nc
+    nc = 3
     ngf = 64
     max_factor = 16
     nl = (3, 5, 5)
@@ -102,7 +102,7 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
     print("Success! Weights are perfectly aligned.")
 
     print(f"Generating {num_realizations} 3D River Block Realizations...")
-    for i in range(10,num_realizations):
+    for i in range(num_realizations):
         with torch.no_grad():
             z = torch.randn(1, nz).to(device)
             z_input = z.view(z.shape + (1, 1, 1))

@@ -59,7 +59,12 @@ def main():
     nl = (3, 5, 5)
     
     use_one_hot = not config['disable_one_hot']
-    nc = 3 if use_one_hot else 1
+    one_hot_all = config.get('one_hot_all', False) # Assuming you add this to your args
+    if use_one_hot:
+        nc = 9 if one_hot_all else 3
+    else:
+        nc = 1
+        
     encoding_tag = "one_hot" if use_one_hot else "no_one_hot"
     
     # Strictly matching working script: Always use Tanh for output bounds
@@ -82,7 +87,7 @@ def main():
                             layer_normalization=None,
                             weight_normalization=nn.utils.parametrizations.spectral_norm,
                             activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
-                            use_double_conv=False, use_double_resblocks=False,
+                            use_double_conv=True, use_double_resblocks=False,                      # Set one to True?
                             use_attention=False)
 
     optimizer_generator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
@@ -91,7 +96,7 @@ def main():
     loss_generator = nn.BCEWithLogitsLoss()
     loss_discriminator = nn.BCEWithLogitsLoss()
     
-    penalty_discriminator = R1Regularization(gamma=10., num_iter=16, use_amp=True)      # Have a lower num_iter -> 
+    penalty_discriminator = R1Regularization(gamma=10., num_iter=16, use_amp=True)      # Remove entirely?
 
     ################################################################################
     # Validation
@@ -105,13 +110,29 @@ def main():
                          batch_size=config['val_batch_size'],
                          n_gpu=config['num_gpus'])
 
-    #### COMMENT: increase n_descriptors in the MSSWD metric -> larger 3D blocks so more information to be processed!
+    #### COMMENT: increase n_descriptors in the MSSWD metric -> larger 3D blocks so more information to be processed!n
+    metric_params = dict(n_levels=3,
+                         n_descriptors=1024,
+                         descriptor_size=(4, 7, 7),
+                         n_repeat=12,
+                         n_proj=256,
+                         padding_mode='circular', 
+                         combine_levels=True, 
+                         batch_size=config['val_batch_size'],
+                         n_gpu=config['num_gpus'])
+
     if use_one_hot:
-        ms_swd_fa1 = MSSWD(**metric_params, channel=0)
-        ms_swd_fa2 = MSSWD(**metric_params, channel=1)
-        ms_swd_fa3 = MSSWD(**metric_params, channel=2)
+        metrics = []
+        
+        # Dynamically create an MSSWD metric for every single facies channel
+        for channel_idx in range(nc):
+            ms_swd = MSSWD(**metric_params, channel=channel_idx)
+            metrics.append(ms_swd)
+            
+        # Add the Line of Sight (LoS) metric (leaving it on channel 0 as in your original code)
         los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
-        metrics = [ms_swd_fa1, ms_swd_fa2, ms_swd_fa3, los]
+        metrics.append(los)
+        
     else:
         ms_swd = MSSWD(**metric_params)
         los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
@@ -126,6 +147,7 @@ def main():
                       num_samples = config['num_samples'],
                       save_mapping_dir=run_dir,
                       use_one_hot=use_one_hot,
+                      one_hot_all=one_hot_all,  
                       dataset_name=dataset_name,
                       num_epochs=config['epochs'])
 
@@ -153,12 +175,13 @@ def main():
                       loss_discriminator,
                       initialize_weights=initialize_weights_normal,
                       num_iter_discriminator=1,
-                      num_accumulated=1, # Match fluvgan perfectly
+                      num_accumulated=1, 
                       fake_label_generator=1.,
                       real_label_discriminator=1.0,
                       fake_label_discriminator=0.0,
-                      penalty_generator=None,
-                      penalty_discriminator=penalty_discriminator)
+                      penalty_generator=None
+                      )
+                      #penalty_discriminator=penalty_discriminator)
         
         gan.train(dataset,
                   num_epochs=config['epochs'],

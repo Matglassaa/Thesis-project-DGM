@@ -121,32 +121,86 @@ class FaciesDataset(Dataset):
     def __getitem__(self, idx):
         """
         Retrieves and processes a specific sample from the dataset.
-
-        Fetches the raw data slice either from the RAM cache or directly from disk,
-        applies the defined facies mapping, and formats the output tensor (scaling and/or 
-        one-hot encoding based on initialization parameters).
-
-        Args:
-            idx (int): The index of the sample to retrieve.
-
-        Returns:
-            dict: A dictionary containing the processed PyTorch tensor under the key 'data'.
+        *DEBUG FEATURE*: Pass a string ending in '.npy' to inspect a specific file.
         """
-        if self.preload_ram:
+        is_inspecting = isinstance(idx, str) and idx.endswith('.npy')
+        
+        if is_inspecting:
+            data = np.load(idx).astype(np.uint8)
+            print(f"--- INSPECTING: {idx} ---")
+            print(f"1. RAW DATA    | Shape: {data.shape} | Unique Vals: {np.unique(data)}")
+        elif self.preload_ram:
             data = self.data_cache[idx]
         else:
             with h5py.File(self.h5_path, 'r') as h5f:
                 data = h5f['facies'][idx].astype(np.uint8)
         
+        # --- 2. APPLY MAPPING ---
         mapped_data = self.mapping[data]
+        
+        if is_inspecting:
+            print(f"2. MAPPED DATA | Shape: {mapped_data.shape} | Unique Vals: {np.unique(mapped_data)}")
+            
         tensor_data = torch.from_numpy(mapped_data).long()
         
+        # --- 3. FORMATTING (ONE-HOT & SCALING) ---
         if self.use_one_hot:
-            # Use dynamic self.num_classes instead of hardcoded 3
             processed_data = F.one_hot(tensor_data, num_classes=self.num_classes).permute(3, 0, 1, 2).float()
             processed_data = (processed_data * 2.0) - 1.0
         else:
             processed_data = tensor_data.unsqueeze(0).float()
             processed_data = processed_data - 1.0
 
-        return {'data': processed_data}   
+        if is_inspecting:
+            print(f"3. FINAL TENSOR| Shape: {processed_data.shape} | Unique Vals: {torch.unique(processed_data).tolist()}\n")
+
+        return {'data': processed_data} 
+
+if __name__ == "__main__":
+    import os
+    
+    # ---------------------------------------------------------
+    # 1. Define your paths here
+    # ---------------------------------------------------------
+    # The HDF5 file must exist so the class can initialize without error
+    REAL_H5_PATH = "path/to/your/actual_dataset.h5" 
+    TEST_NPY_PATH = "data/test_outputs_lower_plain_delta_nz_32/sample_1_facies.npy"
+    
+    # ---------------------------------------------------------
+    # 2. Generate a dummy .npy file for testing (if needed)
+    # ---------------------------------------------------------
+    if not os.path.exists(TEST_NPY_PATH):
+        print(f"Creating a dummy .npy file at {TEST_NPY_PATH}...")
+        # Simulating a 3D crop (e.g., Depth x Height x Width)
+        dummy_data = np.random.choice([1, 5, 10], size=(32, 64, 64)).astype(np.uint8)
+        np.save(TEST_NPY_PATH, dummy_data)
+        print("Dummy file created.\n")
+
+    # ---------------------------------------------------------
+    # 3. Run the Inspection
+    # ---------------------------------------------------------
+    try:
+        # Initialize the dataset (requires valid H5 path to pass __init__ checks)
+        print("Initializing FaciesDataset...")
+        dataset = FaciesDataset(
+            h5_path=REAL_H5_PATH, 
+            num_samples=10,        # Keep small for quick init
+            use_one_hot=True, 
+            one_hot_all=False,
+            preload_ram=False      # Turn off preload to save time during debugging
+        )
+        print("Initialization successful.\n")
+        
+        # Trigger the inspection by passing the .npy string instead of an integer
+        inspection_result = dataset[TEST_NPY_PATH]
+        
+        # Verify the final output
+        final_tensor = inspection_result['data']
+        print(f"--- SUCCESS ---")
+        print(f"Final output is a Tensor of type {final_tensor.dtype} and shape {final_tensor.shape}")
+        
+    except FileNotFoundError:
+        print(f"ERROR: Could not find the HDF5 file at '{REAL_H5_PATH}'.")
+        print("Please update REAL_H5_PATH to point to your actual dataset file so the class can initialize.")
+    except KeyError as e:
+        print(f"ERROR: {e}")

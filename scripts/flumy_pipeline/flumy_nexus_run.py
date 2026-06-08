@@ -16,10 +16,10 @@ from joblib import Parallel, delayed
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert directory of .npz/.npy files to a single .h5 file")
     parser.add_argument('--num_files', type=int, default=1000, help='Number of Flumy samples to generate (default: 20000)')
-    parser.add_argument('--num_workers', type=int, default=8, help='Number of parallel workers (default: 8)')
+    parser.add_argument('--num_workers', type=int, default=16, help='Number of parallel workers (default: 8)')
     parser.add_argument('--ntg', type=float, default=0.67, help='Net-to-Gross ratio for the Flumy simulations (default: 0.67)')
-    parser.add_argument('--max_ch_depth', type=int, default=6, help='Maximum channel depth in meters (default: 6)')
-    parser.add_argument('--isbx', type=int, default=100, help='Number of grid blocks in the X direction (default: 100)')
+    parser.add_argument('--max_ch_depth', type=int, default=5, help='Maximum channel depth in meters (default: 6)')
+    parser.add_argument('--isbx', type=int, default=80, help='Number of grid blocks in the X direction (default: 100)')
     
     return parser.parse_args()
 
@@ -30,7 +30,7 @@ def os_check(num_samples, ntg, max_ch_depth, isbx):
         str: Base directory for data storage based on the operating system.
     """
     if os.name == 'nt':  # Windows
-        BASE_PATH = os.path.join(os.getcwd(), 'datasets', 'training',f'setting_1_nexus_{num_samples}_samples_ntg_{ntg}_chdepth_{max_ch_depth}_isbx_{isbx}')
+        BASE_PATH = os.path.join(os.getcwd(), 'datasets', 'training',f'setting_1_nexus_{num_samples}_samples_ntg_{int(ntg*100)}_chdepth_{max_ch_depth}_isbx_{isbx}')
     else:  # Linux
         home_dir = os.path.expanduser("~") 
         BASE_PATH = os.path.join(home_dir, 'data', 'datasets', f'training_dataset_nexus_{num_samples}_samples_ntg_{ntg}_chdepth_{max_ch_depth}_isbx_{isbx}')
@@ -79,12 +79,12 @@ def flumy_worker(sim_id, base_seed, input_params, facies_dir, age_dir, max_retri
     top_cut = input_params['top_cut']
     dz = input_params['dz']
     
-    # Total simulation height = target height + bottom cut + top cut
-    zul = target_nz + bottom_cut + top_cut
+    # Total simulation height = target height + bottom cut + top cut + safety margin
+    safety_margin = 10
+    zul = target_nz + bottom_cut + top_cut + safety_margin
 
     print(f"[{unique_seed}] Starting simulation (Seed: {unique_seed}, Zul: {zul}m)")
 
-    # --- AUTOMATIC RETRY LOOP ---
     for attempt in range(1, max_retries + 1):
         sample_start_time = time.time()
         try:
@@ -107,6 +107,9 @@ def flumy_worker(sim_id, base_seed, input_params, facies_dir, age_dir, max_retri
 
             # Extract the middle block
             facies, _, age = flsim.getBlock(dz=dz, zb=bottom_cut, nz=target_nz)
+
+            # Replace any 255 values with 1 to ensure valid facies labels
+            facies[facies == 255] = 1
             
             # Validating actual physical dimensions from the API (X, Y, Z)
             expected_shape = (nx, ny, target_nz)

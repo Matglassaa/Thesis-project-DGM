@@ -40,7 +40,7 @@ from voxgan.networks.utils import initialize_weights_normal
 from voxgan.models.loss import R1Regularization
 from voxgan.models.metrics import MSSWD, LoS
 
-from scripts.GAN.dataloader import FaciesDataset
+from scripts.old_scripts.old_gan_scripts.GAN.dataloader import FaciesDataset
 
 # path definintion
 home_path = Path.home()

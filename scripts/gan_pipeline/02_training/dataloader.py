@@ -14,7 +14,7 @@ class FaciesDataset(Dataset):
         self.one_hot_all = one_hot_all
         self.preload_ram = preload_ram
         
-        self.num_classes = 10 if self.one_hot_all else 3
+        self.num_classes = 9 if self.one_hot_all else 3
         
         # --- MODIFICATION: Bypass H5 loading if h5_path is None ---
         if self.h5_path is not None:
@@ -42,8 +42,7 @@ class FaciesDataset(Dataset):
                 self.mapping = np.zeros(13, dtype=np.int64)
                 self.mapping[1:4] = 0   
                 self.mapping[4:8] = 1 
-                self.mapping[9] = 0  
-                self.mapping[[8, 10, 11, 12]] = 2
+                self.mapping[8:12] = 2
                 self.reverse_mapping = {0: 1, 1: 4, 2: 8}
         else:
             max_val = max(facies_mapping.keys())
@@ -56,6 +55,26 @@ class FaciesDataset(Dataset):
 
         if save_mapping_dir:
             self._save_mapping(save_mapping_dir)
+
+    def _save_mapping(self, save_dir):
+        """
+        Saves the facies mapping configuration to a JSON file.
+
+        Creates the directory if it does not exist and writes the forward mapping array,
+        representative reverse mapping, and one-hot configuration to 'facies_mapping_config.json'.
+
+        Args:
+            save_dir (str): The directory where the configuration file will be saved.
+        """
+        os.makedirs(save_dir, exist_ok=True)
+        config_path = os.path.join(save_dir, "facies_mapping_config.json")
+        config = {
+            "forward_mapping_array": self.mapping.tolist(),
+            "representative_reverse_mapping": self.reverse_mapping,
+            "used_one_hot": self.use_one_hot
+        }
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=4)
 
     def __len__(self):
         return self.length
@@ -82,15 +101,14 @@ class FaciesDataset(Dataset):
         tensor_data = torch.from_numpy(mapped_data).long()
         
         if self.use_one_hot:
-            # Determine correct permute order based on input shape dynamically
-            dims = len(tensor_data.shape) + 1 # +1 for the new one-hot class dimension
+            dims = len(tensor_data.shape) + 1 
             permute_order = (dims - 1,) + tuple(range(dims - 1))
             
             processed_data = F.one_hot(tensor_data, num_classes=self.num_classes).permute(*permute_order).float()
-            #processed_data = (processed_data * 2.0) - 1.0
+            
+            processed_data = (processed_data * 2.0) - 1.0
         else:
             processed_data = tensor_data.unsqueeze(0).float()
-            #processed_data = processed_data - 1.0
 
         if is_inspecting:
             print(f"3. FINAL TENSOR| Shape: {processed_data.shape} | Unique Vals: {torch.unique(processed_data).tolist()}\n")

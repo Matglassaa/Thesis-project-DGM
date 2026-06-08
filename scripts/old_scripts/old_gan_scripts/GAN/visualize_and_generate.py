@@ -70,13 +70,12 @@ def plot_losses(csv_path, output_dir):
     plt.close()
     print(f"Loss plot saved to: {save_path}")
 
-def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
+def generate_realizations(ckpt_path, output_dir, nc = 3, num_realizations=10):
     if not os.path.exists(ckpt_path):
         print(f"Checkpoint not found at '{ckpt_path}'. Skipping generation.")
         return
 
     nz = 100
-    nc = 9
     ngf = 64
     max_factor = 16
     nl = (3, 5, 5)

@@ -28,29 +28,55 @@ from collections import Counter
 # Import custom utilities
 from custom_plots import apply_custom_plotting_flavor
 
-class PostProcessing1:
+class PostProcessing:
+    """Handles spatial and statistical validation metrics for GAN-generated geological facies.
+
+    This class provides tools to read, map, and analyze 3D categorical grid data
+    from both ground-truth (real) datasets and Generative Adversarial Network
+    outputs. It includes methods for spatial entropy mapping, volumetric facies 
+    distributions, multi-point pattern frequency counts, connectivity analysis, 
+    and 3D volumetric rendering.
+
+    Attributes:
+        output_dir (str): Destination path where generated plots and metrics are saved.
+        script_path (pathlib.Path): Absolute path pointing to this script file.
+        cwd (pathlib.Path): Absolute path pointing to the current working directory.
+        real_files (list of str): Sorted file paths matching the real data directory pattern.
+        gan_files (list of str): Sorted file paths matching the GAN outputs directory pattern.
+        num_samples (int): The capped total of samples to evaluate for pattern/connectivity checks.
+        facies_mapping (dict): Numerical mapping translating simplified IDs to evaluation labels.
     """
-    
-    """
-    def __init__(self, output_dir, real_path, gan_path, num_samples=10):
-        """
-        Initializes the class by loading ALL file paths.
-        """
+    def __init__(self, output_dir, real_path, gan_path, save_plots:bool, num_samples=10):
+        """Initializes the class by loading ALL file paths.
+
+        Args:
+            output_dir (str): Directory where output files and figures will be saved.
+            real_path (str): Glob-compatible path string matching the real .npy files.
+            gan_path (str): Glob-compatible path string matching the GAN .npy/.npz files.
+            num_samples (int, optional): Maximum number of samples to use for subset-heavy 
+                analyses like connectivity. Defaults to 10.
+        """ 
         self.output_dir = output_dir
         self.script_path = pathlib.Path(__file__).resolve()
         self.cwd = pathlib.Path().resolve()
         
         # Load ALL available file paths
-        self.real_files = sorted(glob.glob(real_path))
-        self.gan_files = sorted(glob.glob(gan_path))
+        self.real_files = sorted(glob.glob(str(real_path)))
+        self.gan_files = sorted(glob.glob(str(gan_path)))
         
         # Subset limit for connectivity analysis
         self.num_samples = min(num_samples, len(self.real_files), len(self.gan_files))
         self.facies_mapping = {0: 1, 1: 4, 2: 8}
+        self.save_plots = save_plots
 
     def _load_real(self, file):
-        """
-        Loads the facies array and maps real labels to representative facies [1, 4, 8].
+        """Loads the facies array and maps real labels to representative facies [1, 4, 8].
+
+        Args:
+            file (str): File path to a ground-truth .npy grid.
+
+        Returns:
+            np.ndarray: A 3D numpy integer array with consolidated categorical labels (1, 4, or 8).
         """
         data = np.load(file)
         mapped_data = np.zeros_like(data)
@@ -60,42 +86,101 @@ class PostProcessing1:
         mapped_data[(data >= 8)] = 8
         
         return mapped_data
-
-    def _load_gan_raw(self, file):
-        """
-        Loads the raw continuous GAN output array.
-        """
+    
+    def _load_gan(self, file):
+        """Loads GAN output and standardizes it to a 3D categorical array."""
         if file.endswith('.npz'):
             with np.load(file) as data:
-                arr = data['facies'] if 'facies' in data else data[data.files[0]]
+                raw_arr = data['facies'] if 'facies' in data else data[data.files[0]]
         else:
-            arr = np.load(file)
-        return arr
+            raw_arr = np.load(file)
 
-    def _map_gan_to_facies(self, arr):
-        """
-        Maps continuous GAN labels [-1, 0, 1] to representative facies [1, 4, 8].
-        """
-        class_indices = np.round(arr + 1).astype(int)
-        class_indices = np.clip(class_indices, 0, 2)
-        mapping = np.array([1, 4, 8])
+        if raw_arr.ndim == 4:
+            # Fallback just in case you ever DO feed it a 4D array
+            class_indices = np.argmax(raw_arr, axis=0) 
+            
+        elif raw_arr.ndim == 3:
+            # Differentiate between floats (Tanh) and integers (Argmax/One-Hot)
+            if raw_arr.min() < 0 or raw_arr.dtype in [np.float32, np.float64]:
+                # Legacy handling: Continuous tanh data [-1, 1]
+                class_indices = np.round(raw_arr + 1).astype(int)
+                class_indices = np.clip(class_indices, 0, 2)
+            else:
+                # NEW: Data is already collapsed integers from the generation script
+                class_indices = raw_arr.astype(int)
+        else:
+            raise ValueError(f"Unexpected array shape {raw_arr.shape} in file {file}")
+
+        return self._map_indices_to_facies(class_indices)
+
+    def _map_indices_to_facies(self, class_indices):
+        """Maps 0-indexed categorical data to specific geological facies codes."""
+        # Note: If you have 9 channels, mapping needs to support 9 values.
+        # This is a fallback example; ideally, load this dynamically from facies_config.json
+        
+        if class_indices.max() < 3:
+            mapping = np.array([1, 4, 8]) # For 3 channels
+        else:
+            # Example mapping for 9 channels - adjust to your real facies codes
+            mapping = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9]) 
+            
         return mapping[class_indices]
 
-    def _load_gan(self, file):
-        """
-        Legacy wrapper to keep existing functions working.
-        """
-        raw_arr = self._load_gan_raw(file)
-        return self._map_gan_to_facies(raw_arr)
+    # def _load_gan_raw(self, file):
+    #     """Loads the raw continuous GAN output array.
+
+    #     Supports both standard text numpy array collections (`.npy`) and compressed 
+    #     numpy archives (`.npz`).
+
+    #     Args:
+    #         file (str): File path to the GAN realization target.
+
+    #     Returns:
+    #         np.ndarray: Unprocessed continuous array data containing raw model outputs.
+    #     """
+    #     if file.endswith('.npz'):
+    #         with np.load(file) as data:
+    #             arr = data['facies'] if 'facies' in data else data[data.files[0]]
+    #     else:
+    #         arr = np.load(file)
+    #     return arr
+
+    # def _map_gan_to_facies(self, arr):
+    #     """Maps continuous GAN labels [-1, 0, 1] to representative facies [1, 4, 8].
+
+    #     Args:
+    #         arr (np.ndarray): Continuous 3D numpy array from raw GAN tanh layers.
+
+    #     Returns:
+    #         np.ndarray: Categorical 3D integer array containing the mapped labels (1, 4, or 8).
+    #     """
+    #     class_indices = np.round(arr + 1).astype(int)
+    #     class_indices = np.clip(class_indices, 0, 2)
+    #     mapping = np.array([1, 4, 8])
+    #     return mapping[class_indices]
+
+    # def _load_gan(self, file):
+    #     """Legacy wrapper to keep existing functions working.
+
+    #     Args:
+    #         file (str): File path to the GAN realization target.
+
+    #     Returns:
+    #         np.ndarray: Categorical 3D integer array mapped straight to standard IDs.
+    #     """
+    #     raw_arr = self._load_gan_raw(file)
+    #     return self._map_gan_to_facies(raw_arr)
     
     def _create_colormap_and_legend(self):
-        """
-        Creates a ListedColormap and legend patches based on facies_properties.
-        
-        Returns:
-            tuple: A tuple containing the custom colormap and a list of legend patches.
-        """
+        """Creates a ListedColormap and legend patches based on facies_properties.
 
+        Returns:
+            tuple: A two-element tuple containing:
+                - custom_cmap (matplotlib.colors.ListedColormap or None): Ordered discrete color map 
+                  if the configuration is found.
+                - legend_patches (list of matplotlib.patches.Patch or None): Named legend handles 
+                  for plots.
+        """
         try:
             with open('scripts/gan_pipeline/core/facies_config.json','r') as f:
                 facies_properties = json.load(f)
@@ -114,8 +199,21 @@ class PostProcessing1:
         return custom_cmap, legend_patches
 
     def get_pattern_counts(self, data_array, template_size=(3, 3, 3)):
-        """
-        Extracts patterns and their raw counts from a single 3D array.
+        """Extracts patterns and their raw counts from a single 3D array.
+
+        Uses a sliding structural window approach to look at multi-point local configurations
+        and group them into unique spatial configurations.
+
+        Args:
+            data_array (np.ndarray): Target 3D matrix representing a categorical grid.
+            template_size (tuple of int, optional): Dimensions of the sliding structural voxel block. 
+                Defaults to (3, 3, 3).
+
+        Returns:
+            tuple: A two-element tuple containing:
+                - unique_patterns (np.ndarray): Two-dimensional array where each row represents 
+                  a unique flattened voxel combination pattern.
+                - counts (np.ndarray): One-dimensional array tracking total occurrences of each pattern.
         """
         windows = view_as_windows(data_array, template_size)
         
@@ -127,8 +225,18 @@ class PostProcessing1:
         return unique_patterns, counts
 
     def analyze_connectivity(self, data_array, target_facies):
-        """
-        Finds connected 3D bodies of a specific facies and returns their volumes.
+        """Finds connected 3D bodies of a specific facies and returns their volumes.
+
+        Calculates disconnected component size volumes assuming full 26-neighbor 
+        connectivity (all corners, faces, and edges touching).
+
+        Args:
+            data_array (np.ndarray): Target 3D array representing a categorical grid.
+            target_facies (int): The discrete target ID (e.g., 1 for Channel) to isolate.
+
+        Returns:
+            np.ndarray: A sorted or raw 1D array where each value corresponds to the 
+            total voxel count (volume) of an isolated geobody feature.
         """
         binary_mask = (data_array == target_facies).astype(int)
         structure = np.ones((3, 3, 3)) 
@@ -140,8 +248,17 @@ class PostProcessing1:
         return blob_sizes[1:] 
     
     def _plot_entropy_matrix_helper(self, slices_stack, slice_indices, axis_name, xlabel, ylabel, data_dir, num_files):
-        """
-        Helper function to calculate and plot the entropy matrices with dynamic titling.
+        """Helper function to calculate and plot the entropy matrices with dynamic titling.
+
+        Args:
+            slices_stack (np.ndarray): Four-dimensional array tracking collected slice data 
+                across the entire dataset ensemble. Shape: (num_realizations, 9, dim_y, dim_x).
+            slice_indices (list of int): Grid index locations along the isolated axis.
+            axis_name (str): Identifier label for the cross-section plane constraint ('X', 'Y', or 'Z').
+            xlabel (str): Label applied to the x-axis for plotting.
+            ylabel (str): Label applied to the y-axis for plotting.
+            data_dir (str): Base file pathway used to dynamically label saved items.
+            num_files (int): Total count of realizations evaluated for the figure.
         """
         num_realizations, _, dim_y, dim_x = slices_stack.shape
         facies_values = [1, 4, 8]
@@ -179,14 +296,19 @@ class PostProcessing1:
         dataset_name = os.path.basename(os.path.normpath(data_dir))
         plot_path = os.path.join(self.output_dir, f"entropy_matrix_{plane}_{dataset_name}_{num_files}_samples.png")
         
-        plt.savefig(plot_path, bbox_inches='tight', dpi=600)
+        if self.save_plots:
+            plt.savefig(plot_path, bbox_inches='tight', dpi=600)
+            print(f"Saved {plane} entropy plot to: {plot_path}")
         plt.close(fig)
-        print(f"Saved {plane} entropy plot to: {plot_path}")
 
     def plot_facies_percentages(self, nc):
-        """
-        Calculates and plots the raw continuous distribution AND the discrete mapped 
-        percentage distribution of each facies over ALL GAN realizations.
+        """Plots the continuous and discrete percentage distributions across all GAN realizations.
+
+        Builds a side-by-side subplot tracking raw value histograms (tanh spread) and 
+        final mapped volume bars for individual rock/sediment types.
+
+        Args:
+            nc (int): Total expected number of structural classes to evaluate.
         """
         print(f"\n--- Generating Facies Distribution Plots across {len(self.gan_files)} Realizations ---")
         
@@ -270,14 +392,18 @@ class PostProcessing1:
         
         # Save the plot
         plot_path = os.path.join(self.output_dir, f"facies_distributions_ensemble_{len(self.gan_files)}_samples.png")
-        plt.savefig(plot_path, bbox_inches='tight', dpi=300)
-        plt.close(fig)
+        if self.save_plots:
+            plt.savefig(plot_path, bbox_inches='tight', dpi=300)
+            print(f"Saved facies distribution plot to: {plot_path}")
+        plt.show(fig)
         
-        print(f"Saved ensemble facies distribution plot to: {plot_path}")
 
     def plot_entropy(self):
-        """
-        Calculates and plots cell-wise entropy across ALL loaded GAN realizations.
+        """Calculates and plots cell-wise entropy across ALL loaded GAN realizations.
+
+        Extracts 9 random but consistent slice coordinates on X, Y, and Z axes from the grid 
+        dimensions, calculates information theory Shannon entropy on cell variations across 
+        the ensemble, and compiles spatial variance matrix plots.
         """
         num_total = len(self.gan_files)
         print(f"\n--- Generating Entropy Matrices ({num_total} Realizations) ---")
@@ -315,8 +441,15 @@ class PostProcessing1:
         self._plot_entropy_matrix_helper(stack_zy, x_slices, 'X', 'Y', 'Z', data_dir, num_total)
 
     def connectivity_and_pattern_analysis(self, target_val=1):
-        """
-        Executes the MPS and Connectivity analysis over the ensemble of models.
+        """Executes Multi-Point Statistics (MPS) and Connectivity comparison across sets.
+
+        Loops through real and fake sample pairs up to `self.num_samples` to gather structural
+        pattern dictionaries and aggregate categorical object sizes, outputting comparison 
+        statistics (max and median sizes) directly to terminal standard output.
+
+        Args:
+            target_val (int, optional): The focused discrete facies ID code to evaluate 
+                for connected bodies. Defaults to 1 (Channel).
         """
         real_pattern_counter = Counter()
         gan_pattern_counter = Counter()
@@ -366,11 +499,14 @@ class PostProcessing1:
             print(f"GAN ensemble median blob size: {np.median(all_gan_blob_sizes)} voxels")
     
     def plot_3d_pyvista(self):
+        """Renders a 3D volumetric plot of a random sample using PyVista.
+
+        Generates 3 separate subplots in one saved composite image, where each window 
+        applies threshold filtering to cleanly isolate exactly one facies indicator (1, 4, 8).
+
+        Raises:
+            FileNotFoundError: If the internal file list contains no valid target `.npy` components.
         """
-        Renders a 3D volumetric plot of a random sample using PyVista.
-        Generates 3 subplots in one image, each showing only one of the facies (1, 4, 8).
-        """
-        
         print("\n--- Generating 3D PyVista Plot ---")
         try:
             import pyvista as pv
@@ -422,11 +558,12 @@ class PostProcessing1:
             plotter.view_isometric()
 
         plot_path = os.path.join(self.output_dir, f"3d_plot_{os.path.splitext(os.path.basename(random_file))[0]}_facies.png")
-        plotter.show(screenshot=plot_path)
-        print(f"Saved 3D plot to: {plot_path}") 
+        if self.save_plots:
+            plotter.show(screenshot=plot_path)
+            print(f"Saved 3D plot to: {plot_path}") 
 
 if __name__ == "__main__":
-    validator = PostProcessing1(
+    validator = PostProcessing(
         output_dir='outputs/20000_training_samples/RUN_20000_samples_50_epochs_bs_64_val_size_010_one_hot_all',
         real_path='datasets/training/training_dataset_upper_plain_delta_128/*.npy',
         gan_path='outputs/20000_training_samples/RUN_20000_samples_50_epochs_bs_64_val_size_010_one_hot_all/realizations/*.npy',
@@ -437,7 +574,7 @@ if __name__ == "__main__":
     apply_custom_plotting_flavor()
 
     # Plot the percentage distribution of facies for a random generated sample
-    validator.plot_facies_percentages(nc=9)
+    validator.plot_facies_percentages(nc=3)
     
     # Processes 10 samples (subset)
     validator.connectivity_and_pattern_analysis(target_val=1)

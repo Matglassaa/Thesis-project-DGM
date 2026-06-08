@@ -7,13 +7,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from functools import partial
 from voxgan.networks import resnet
+import torch.nn.functional as F
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
     parser.add_argument('--csv_path', type=str, default='outputs/2000_training_samples/RUN_2000_samples_128xy_dataset_50_epochs/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/20000_training_samples/RUN_10000_of_20000_samples_128xy_dataset_50_epochs_bs_64_val_size_020_double_conv/architecture_4_dcgan_training_datset_upper_plane_delta_20000_one_hot_epochs_50_bs_64_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default=r'outputs/20000_training_samples/RUN_10000_of_20000_samples_128xy_dataset_50_epochs_bs_64_val_size_020_double_conv/realizations', help='Output folder')
-    parser.add_argument('--num_reals', type=int, default=1000, help='Number of realizations to generate')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/post_training/10000_training_samples/RUN_10000_samples_5_epochs_bs_64_val_size_015_one_hot_label_smoothing/architecture_4_dcgan_samples_one_hot_all_epochs_5_bs_64_run_1.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default='outputs/post_training/10000_training_samples/RUN_10000_samples_5_epochs_bs_64_val_size_015_one_hot_label_smoothing/realizations', help='Output folder')
+    parser.add_argument('--num_reals', type=int, default=100, help='Number of realizations to generate')
 
     return parser.parse_args()
 
@@ -48,13 +49,15 @@ def plot_losses(csv_path, output_dir):
     plt.ylabel("D(x) and D(G(z))")
     plt.xlabel("Iteration")
 
-    # Subplot 3: MS-SWD Metric
     plt.subplot(3, 1, 3)
-    if "MS-SWD" in loss.columns:
-        loss_max_iter = loss[loss["MS-SWD"].isna() == False]
-        if not loss_max_iter.empty:
-            plt.plot(loss_max_iter["iteration"], loss_max_iter["MS-SWD"], label="MS-SWD")
-    plt.legend()
+    ms_swd_cols = [col for col in loss.columns if "MS-SWD" in col]
+    for i, col in enumerate(ms_swd_cols):
+        loss_valid = loss[loss[col].notna()]
+        if not loss_valid.empty:
+            plt.plot(loss_valid["iteration"], loss_valid[col], marker='.', label=f"MS-SWD (Channel {i})")
+    
+    if ms_swd_cols:
+        plt.legend()
     plt.ylabel("MS-SWD")
     plt.xlabel("Iteration")
 
@@ -64,16 +67,15 @@ def plot_losses(csv_path, output_dir):
     plt.close()
     print(f"Loss plot saved to: {save_path}")
 
-def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
+def generate_realizations(ckpt_path, output_dir, nc=9, nl = (3,5,5), num_realizations=100):
     if not os.path.exists(ckpt_path):
         print(f"Checkpoint not found at '{ckpt_path}'. Skipping generation.")
         return
 
+    last_activation = nn.Tanh
     nz = 100
-    nc = 3
     ngf = 64
     max_factor = 16
-    nl = (3, 5, 5)
 
     print("Building Generator...")
     gen_layer = resnet.DeepGenerator3d(
@@ -82,7 +84,7 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
         last_layer_normalization=nn.BatchNorm3d,
         weight_normalization=nn.utils.parametrizations.spectral_norm,
         activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
-        last_activation=nn.Tanh, use_double_conv=False, use_double_resblocks=False,
+        last_activation=last_activation, use_double_conv=False, use_double_resblocks=False,
         use_attention=False, skip_z=False, split_z=False
     )
 
@@ -107,8 +109,13 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
             z = torch.randn(1, nz).to(device)
             z_input = z.view(z.shape + (1, 1, 1))
             output = gen_layer(z_input)
+            
             sample = output['data'].cpu().numpy() if isinstance(output, dict) else output.cpu().numpy()
-            volume = sample[0, 0, :, :, :]
+            
+            if nc > 1:
+                volume = np.argmax(sample[0], axis=0).astype(np.uint8)
+            else:
+                volume = sample[0, 0, :, :, :]
 
             out_path = os.path.join(output_dir, f"realization_{i+1:02d}.npy")
             np.save(out_path, volume)
@@ -116,10 +123,10 @@ def generate_realizations(nc, ckpt_path, output_dir, num_realizations=10):
 
 def main():
     args = parse_args()
-
-    #os.makedirs(args.output_dir, exist_ok=True)
+    output_dir = os.path.join(args.output_dir,'realizations')
+    os.makedirs(output_dir, exist_ok=True)
     #plot_losses(args.csv_path, args.output_dir)
-    generate_realizations(1, args.ckpt_path, args.output_dir, args.num_reals)
+    generate_realizations(ckpt_path=args.ckpt_path, output_dir=args.output_dir, num_realizations=args.num_reals)
 
 if __name__ == '__main__':
     main()

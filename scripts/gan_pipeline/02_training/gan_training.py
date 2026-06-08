@@ -1,5 +1,3 @@
-################################################################################
-# Imports
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="h5py")
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -29,18 +27,17 @@ from voxgan.networks.utils import initialize_weights_normal
 from voxgan.models.loss import R1Regularization
 from voxgan.models.metrics import MSSWD, LoS
 
+import torch.nn.functional as F
+
 def main():
     config = parse_hybrid_args()
 
-    ################################################################################
-    # Setting
     np.random.seed(43)
     torch.manual_seed(43)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.backends.cuda.matmul.allow_tf32 = True
 
-    # Setup run directory
     run_dir = os.path.join(config['output_dir'], config['run_name'])
     os.makedirs(run_dir, exist_ok=True)
     
@@ -48,41 +45,59 @@ def main():
     config_save_path = os.path.join(run_dir, "config.json")
     save_config(config, config_save_path)
     print(f"Saved run configuration to: {config_save_path}")
-
-    # Validate the dataset before training
     validate_dataset(config['data_file'])
 
-    ################################################################################
-    # Model configuration
+
     model_name = 'architecture_4_dcgan'
     nz = 100
     nl = (3, 5, 5)
-    
+    ngf = 64
+    ndf = ngf
+    max_factor = 16
     use_one_hot = not config['disable_one_hot']
-    nc = 3 if use_one_hot else 1
-    encoding_tag = "one_hot" if use_one_hot else "no_one_hot"
-    
-    # Strictly matching working script: Always use Tanh for output bounds
+    one_hot_all = config.get('one_hot_all', False)
     last_activation = nn.Tanh
+    
+    if use_one_hot:
+        nc = 9 if one_hot_all else 3
+        encoding_tag = "one_hot_all" if one_hot_all else "one_hot"
+    else:
+        nc = 1
+        encoding_tag = "no_one_hot"
+    
 
     generator = partial(resnet.DeepGenerator3d,
-                        nz=nz, ngf=64, nc=nc, nl=nl,
-                        max_factor=16, residual_weight=1., mode='nearest', kernel_size=3,
+                        nz=nz, 
+                        ngf=ngf, 
+                        nc=nc, 
+                        nl=nl,
+                        max_factor=max_factor, 
+                        residual_weight=1., 
+                        mode='nearest', 
+                        kernel_size=3,
                         layer_normalization=nn.BatchNorm3d,
                         last_layer_normalization=nn.BatchNorm3d,
                         weight_normalization=nn.utils.parametrizations.spectral_norm,
                         activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
                         last_activation=last_activation,
-                        use_double_conv=False, use_double_resblocks=False,
-                        use_attention=False, skip_z=False, split_z=False)
+                        use_double_conv=False, 
+                        use_double_resblocks=False,
+                        use_attention=False, 
+                        skip_z=False, 
+                        split_z=False)
 
     discriminator = partial(resnet.DeepDiscriminator3d,
-                            ndf=64, nc=nc, nl=nl,
-                            max_factor=16, residual_weight=1., kernel_size=3,
+                            ndf=ndf, 
+                            nc=nc, 
+                            nl=nl,
+                            max_factor=16, 
+                            residual_weight=1., 
+                            kernel_size=3,
                             layer_normalization=None,
                             weight_normalization=nn.utils.parametrizations.spectral_norm,
                             activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
-                            use_double_conv=False, use_double_resblocks=False,
+                            use_double_conv=False, 
+                            use_double_resblocks=False,
                             use_attention=False)
 
     optimizer_generator = partial(optim.Adam, lr=2e-4, betas=(0., 0.99))
@@ -108,8 +123,11 @@ def main():
     #### COMMENT: increase n_descriptors in the MSSWD metric -> larger 3D blocks so more information to be processed!
     if use_one_hot:
         ms_swd_fa1 = MSSWD(**metric_params, channel=0)
+        ms_swd_fa1.name = "MS-SWD_FA1" 
         ms_swd_fa2 = MSSWD(**metric_params, channel=1)
+        ms_swd_fa2.name = "MS-SWD_FA2" 
         ms_swd_fa3 = MSSWD(**metric_params, channel=2)
+        ms_swd_fa3.name = "MS-SWD_FA3" 
         los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
         metrics = [ms_swd_fa1, ms_swd_fa2, ms_swd_fa3, los]
     else:
@@ -126,6 +144,7 @@ def main():
                       num_samples = config['num_samples'],
                       save_mapping_dir=run_dir,
                       use_one_hot=use_one_hot,
+                      one_hot_all=one_hot_all,
                       dataset_name=dataset_name,
                       num_epochs=config['epochs'])
 
@@ -206,7 +225,13 @@ def main():
                 plot_losses(csv_path, run_dir)
                 
                 # Generate realizations
-                generate_realizations(nc,final_checkpoint_path, run_dir, num_realizations=10)
+                generate_realizations(
+                    ckpt_path=final_checkpoint_path, 
+                    output_dir=run_dir, 
+                    nc=nc, 
+                    nl=nl,
+                    num_realizations=10
+                )
                 print("Post-training visualization complete.")
             except ImportError as e:
                 print(f"Could not import visualization modules: {e}")

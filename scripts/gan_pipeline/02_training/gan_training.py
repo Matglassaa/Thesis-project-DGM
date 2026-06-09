@@ -54,17 +54,19 @@ def main():
     ngf = 64
     ndf = ngf
     max_factor = 16
+    last_activation = nn.Tanh
     use_one_hot = not config['disable_one_hot']
     one_hot_all = config.get('one_hot_all', False)
-    last_activation = nn.Tanh
     
+    with h5py.File(config['data_file'], 'r') as h5f:
+        unique_raw_facies = np.unique(h5f['facies'][0]).tolist()
+        
     if use_one_hot:
-        nc = 9 if one_hot_all else 3
+        nc = len(unique_raw_facies) if one_hot_all else 3
         encoding_tag = "one_hot_all" if one_hot_all else "one_hot"
     else:
         nc = 1
         encoding_tag = "no_one_hot"
-    
 
     generator = partial(resnet.DeepGenerator3d,
                         nz=nz, 
@@ -143,13 +145,9 @@ def main():
                       save_mapping_dir=run_dir,
                       use_one_hot=use_one_hot,
                       one_hot_all=one_hot_all,
+                      unique_raw_facies=unique_raw_facies, 
                       dataset_name=dataset_name,
                       num_epochs=config['epochs'])
-    
-    if hasattr(dataset, 'data_cache'):
-        print(f"\n[DATA INFO] Successfully loaded {dataset.data_cache.shape[0]} samples into RAM.")
-    else:
-        print(f"\n[DATA INFO] Dataset initialized with {len(dataset)} samples (Not preloaded to RAM).")
 
     ################################################################################
     # Training
@@ -162,7 +160,7 @@ def main():
                         discriminator,
                         output_dir_path=run_dir,
                         output_label=output_label,
-                        verbose=2,
+                        verbose=1,
                         num_gpus=config['num_gpus'],
                         num_nodes=1,
                         distributed=False,

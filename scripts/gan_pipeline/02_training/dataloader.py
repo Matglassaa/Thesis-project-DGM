@@ -7,16 +7,14 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 class FaciesDataset(Dataset):
-    def __init__(self, h5_path=None, num_samples=None, nz=32, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, one_hot_all=False, preload_ram=True, **kwargs):        
+    def __init__(self, h5_path=None, num_samples=None, nz=32, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, one_hot_all=False, preload_ram=True, unique_raw_facies=None, **kwargs):        
         self.h5_path = h5_path
         self.nz = nz
         self.use_one_hot = use_one_hot
         self.one_hot_all = one_hot_all
         self.preload_ram = preload_ram
         
-        self.num_classes = 9 if self.one_hot_all else 3
-        
-        # --- MODIFICATION: Bypass H5 loading if h5_path is None ---
+        # 1. Load h5py file
         if self.h5_path is not None:
             with h5py.File(self.h5_path, 'r') as h5f:               
                 if 'facies' not in h5f:
@@ -28,22 +26,30 @@ class FaciesDataset(Dataset):
                 if self.preload_ram:
                     self.data_cache = h5f['facies'][:self.length, -nz:, :, :].astype(np.uint8) 
         else:
-            # Debugging mode active: no H5 file needed
             self.length = 1
             self.preload_ram = False
         
-        # --- Mapping Logic (Unchanged) ---
+        # 2. Define facies mapping: Two options: either use one hot all or divert back to 3 classes (FA1, FA2 and FA3) 
         if facies_mapping is None:
             if self.one_hot_all:
-                self.mapping = np.arange(13, dtype=np.uint8) 
-                self.mapping[1:10] = np.arange(9) 
-                self.reverse_mapping = {i: i for i in range(9)}
+                if unique_raw_facies is None:
+                    raise ValueError("unique_raw_facies must be provided if one_hot_all is True")
+                self.num_classes = len(unique_raw_facies)
+                self.mapping = np.zeros(max(unique_raw_facies) + 1, dtype=np.int64)
+                self.reverse_mapping = {}
+                
+                # Dynamically map whatever values exist to 0, 1, 2, 3...
+                for new_idx, raw_val in enumerate(sorted(unique_raw_facies)):
+                    self.mapping[raw_val] = new_idx
+                    self.reverse_mapping[new_idx] = raw_val
             else:
                 self.mapping = np.zeros(13, dtype=np.int64)
                 self.mapping[1:4] = 0   
                 self.mapping[4:8] = 1 
                 self.mapping[8:13] = 2
                 self.reverse_mapping = {0: 1, 1: 4, 2: 8}
+
+        # 2.1. Custom facies mapping
         else:
             max_val = max(facies_mapping.keys())
             self.mapping = np.zeros(max_val + 1, dtype=np.int64)
@@ -52,7 +58,6 @@ class FaciesDataset(Dataset):
                 self.mapping[raw_val] = new_val
                 if new_val not in self.reverse_mapping:
                     self.reverse_mapping[new_val] = raw_val
-
         if save_mapping_dir:
             self._save_mapping(save_mapping_dir)
 
@@ -70,8 +75,9 @@ class FaciesDataset(Dataset):
         config_path = os.path.join(save_dir, "facies_mapping_config.json")
         config = {
             "forward_mapping_array": self.mapping.tolist(),
-            "representative_reverse_mapping": self.reverse_mapping,
-            "used_one_hot": self.use_one_hot
+            "representative_reverse_mapping": {str(k): v for k, v in self.reverse_mapping.items()}, # Stringify keys for clean JSON serializing
+            "used_one_hot": self.use_one_hot,
+            "num_classes": self.num_classes
         }
         with open(config_path, "w") as f:
             json.dump(config, f, indent=4)

@@ -37,7 +37,7 @@ from voxgan.networks import resnet
 from voxgan.networks.utils import initialize_weights_normal
 from voxgan.models.loss import R1Regularization
 from voxgan.models.metrics import MSSWD, LoS
-from scripts.old_scripts.old_gan_scripts.GAN.dataloader import FaciesDataset
+from scripts.old_scripts.old_gan_scripts.GAN.dataloader_old import FaciesDataset
 
 
 ################################################################################

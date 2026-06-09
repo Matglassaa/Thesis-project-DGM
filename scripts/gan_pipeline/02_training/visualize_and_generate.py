@@ -119,14 +119,14 @@ def generate_realizations(ckpt_path, output_dir, nc=9, nl = (3,5,5), num_realiza
 
             out_path = os.path.join(output_dir, f"realization_{i+1:02d}.npy")
             np.save(out_path, volume)
-            print(f"Generated realization {i+1}/{num_realizations} -> {out_path}")
+            print(f"Generated realization {i+1}/{num_realizations} -> {out_path}. Data shape= {volume.shape}")
 
 def main():
     args = parse_args()
     output_dir = os.path.join(args.output_dir,'realizations')
     os.makedirs(output_dir, exist_ok=True)
     #plot_losses(args.csv_path, args.output_dir)
-    generate_realizations(ckpt_path=args.ckpt_path, output_dir=args.output_dir, num_realizations=args.num_reals)
+    generate_realizations(ckpt_path=args.ckpt_path, output_dir=output_dir, num_realizations=args.num_reals)
 
 if __name__ == '__main__':
     main()

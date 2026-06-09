@@ -42,7 +42,7 @@ class FaciesDataset(Dataset):
                 self.mapping = np.zeros(13, dtype=np.int64)
                 self.mapping[1:4] = 0   
                 self.mapping[4:8] = 1 
-                self.mapping[8:12] = 2
+                self.mapping[8:13] = 2
                 self.reverse_mapping = {0: 1, 1: 4, 2: 8}
         else:
             max_val = max(facies_mapping.keys())
@@ -80,7 +80,6 @@ class FaciesDataset(Dataset):
         return self.length
 
     def __getitem__(self, idx):
-        # --- MODIFICATION: Inspect .npy files directly ---
         is_inspecting = isinstance(idx, str) and idx.endswith('.npy')
         
         if is_inspecting:
@@ -109,6 +108,7 @@ class FaciesDataset(Dataset):
             processed_data = (processed_data * 2.0) - 1.0
         else:
             processed_data = tensor_data.unsqueeze(0).float()
+            processed_data = processed_data - 1.0
 
         if is_inspecting:
             print(f"3. FINAL TENSOR| Shape: {processed_data.shape} | Unique Vals: {torch.unique(processed_data).tolist()}\n")
@@ -116,22 +116,22 @@ class FaciesDataset(Dataset):
         return {'data': processed_data}
 
 
-if __name__ == "__main__":
-    TEST_NPY_PATH = "data/test_outputs_lower_plain_delta_nz_32/sample_1_facies.npy"
+# if __name__ == "__main__":
+#     TEST_NPY_PATH = "data/test_outputs_lower_plain_delta_nz_32/sample_1_facies.npy"
     
-    # 1. Create a quick dummy .npy file if you don't have one ready
-    if not os.path.exists(TEST_NPY_PATH):
-        # Creates a 32x64x64 array containing only raw facies values 1, 5, and 12
-        dummy_data = np.random.choice([1, 5, 12], size=(32, 64, 64)).astype(np.uint8)
-        np.save(TEST_NPY_PATH, dummy_data)
+#     # 1. Create a quick dummy .npy file if you don't have one ready
+#     if not os.path.exists(TEST_NPY_PATH):
+#         # Creates a 32x64x64 array containing only raw facies values 1, 5, and 12
+#         dummy_data = np.random.choice([1, 5, 12], size=(32, 64, 64)).astype(np.uint8)
+#         np.save(TEST_NPY_PATH, dummy_data)
 
-    # 2. Initialize the dataset with NO h5_path (h5_path=None)
-    # This sets up the mapping logic without touching disk I/O
-    dataset = FaciesDataset(
-        h5_path=None, 
-        use_one_hot=True, 
-        one_hot_all=True
-    )
+#     # 2. Initialize the dataset with NO h5_path (h5_path=None)
+#     # This sets up the mapping logic without touching disk I/O
+#     dataset = FaciesDataset(
+#         h5_path=None, 
+#         use_one_hot=True, 
+#         one_hot_all=True
+#     )
     
-    # 3. Feed it the .npy path directly to trigger the printouts
-    _ = dataset[TEST_NPY_PATH]
+#     # 3. Feed it the .npy path directly to trigger the printouts
+#     _ = dataset[TEST_NPY_PATH]

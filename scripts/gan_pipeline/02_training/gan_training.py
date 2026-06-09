@@ -100,7 +100,7 @@ def main():
                             use_double_resblocks=False,
                             use_attention=False)
 
-    optimizer_generator = partial(optim.Adam, lr=2e-4, betas=(0., 0.99))
+    optimizer_generator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
     optimizer_discriminator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
     
     loss_generator = nn.BCEWithLogitsLoss()
@@ -123,13 +123,11 @@ def main():
     #### COMMENT: increase n_descriptors in the MSSWD metric -> larger 3D blocks so more information to be processed!
     if use_one_hot:
         ms_swd_fa1 = MSSWD(**metric_params, channel=0)
-        ms_swd_fa1.name = "MS-SWD_FA1" 
         ms_swd_fa2 = MSSWD(**metric_params, channel=1)
-        ms_swd_fa2.name = "MS-SWD_FA2" 
         ms_swd_fa3 = MSSWD(**metric_params, channel=2)
-        ms_swd_fa3.name = "MS-SWD_FA3" 
-        los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
-        metrics = [ms_swd_fa1, ms_swd_fa2, ms_swd_fa3, los]
+
+        #los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
+        metrics = [ms_swd_fa1, ms_swd_fa2, ms_swd_fa3]
     else:
         ms_swd = MSSWD(**metric_params)
         los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
@@ -147,6 +145,11 @@ def main():
                       one_hot_all=one_hot_all,
                       dataset_name=dataset_name,
                       num_epochs=config['epochs'])
+    
+    if hasattr(dataset, 'data_cache'):
+        print(f"\n[DATA INFO] Successfully loaded {dataset.data_cache.shape[0]} samples into RAM.")
+    else:
+        print(f"\n[DATA INFO] Dataset initialized with {len(dataset)} samples (Not preloaded to RAM).")
 
     ################################################################################
     # Training
@@ -159,7 +162,7 @@ def main():
                         discriminator,
                         output_dir_path=run_dir,
                         output_label=output_label,
-                        verbose=1,
+                        verbose=2,
                         num_gpus=config['num_gpus'],
                         num_nodes=1,
                         distributed=False,
@@ -172,7 +175,7 @@ def main():
                       loss_discriminator,
                       initialize_weights=initialize_weights_normal,
                       num_iter_discriminator=1,
-                      num_accumulated=1, # Match fluvgan perfectly
+                      num_accumulated=1,
                       fake_label_generator=1.,
                       real_label_discriminator=1.0,
                       fake_label_discriminator=0.0,
@@ -230,7 +233,7 @@ def main():
                     output_dir=run_dir, 
                     nc=nc, 
                     nl=nl,
-                    num_realizations=10
+                    num_realizations=100
                 )
                 print("Post-training visualization complete.")
             except ImportError as e:

@@ -15,7 +15,7 @@ from glob import glob
 import sys
 
 from training_dataset_summary import plot_facies_distribution, plot_entropy
-from custom_plots import apply_custom_plotting_flavor, FaciesColorMap
+from gan_pipeline.core.custom_plots import apply_custom_plotting_flavor, FaciesColorMap
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert directory of .npz/.npy files to a single .h5 file")

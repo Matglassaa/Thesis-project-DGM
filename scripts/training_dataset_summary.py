@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colors import ListedColormap
 import matplotlib.patches as mpatches
-from custom_plots import apply_custom_plotting_flavor
+from gan_pipeline.core.custom_plots import apply_custom_plotting_flavor
 
 def parse_args():
     """Parses command line arguments."""

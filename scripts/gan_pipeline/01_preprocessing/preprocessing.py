@@ -13,9 +13,15 @@ import numpy as np
 import h5py
 from glob import glob
 import sys
+from pathlib import Path
+
+scripts_dir = Path(__file__).resolve().parents[2]
+if str(scripts_dir) not in sys.path:
+    sys.path.append(str(scripts_dir))
 
 from training_dataset_summary import plot_facies_distribution, plot_entropy
-from custom_plots import apply_custom_plotting_flavor, FaciesColorMap
+from gan_pipeline.core.custom_plots import apply_custom_plotting_flavor, FaciesColorMap
+apply_custom_plotting_flavor()
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert directory of .npz/.npy files to a single .h5 file")

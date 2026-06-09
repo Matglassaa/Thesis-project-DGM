@@ -25,8 +25,15 @@ from scipy.ndimage import label
 from skimage.util import view_as_windows
 from collections import Counter
 
+import sys
+from pathlib import Path
+
+scripts_dir = Path(__file__).resolve().parents[2]
+if str(scripts_dir) not in sys.path:
+    sys.path.append(str(scripts_dir))
+
 # Import custom utilities
-from custom_plots import apply_custom_plotting_flavor
+from gan_pipeline.core.custom_plots import apply_custom_plotting_flavor
 
 class PostProcessing:
     """Handles spatial and statistical validation metrics for GAN-generated geological facies.

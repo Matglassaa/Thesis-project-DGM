@@ -20,7 +20,7 @@ nohup python fluvgan_2_inversion_8_editing.py \
     --optimized_z_path ~/data/outputs/post_optimization_results/RUN_10000_of_20000_samples_10_epochs_bs_64_val_size_010_no_disc_penalty/optimized_z.npy \
     --well_data_path ~/data/datasets/well_data/Well_data.xlsx \
     --output_dir ~/data/outputs/post_inversion_results/RUN_10000_of_20000_samples_10_epochs_bs_64_val_size_010_no_disc_penalty/ \
-    --batch_size 32 --steps 1000 > editing.out 2>&1 &
+    --batch_size 64 --steps 1000 > editing.out 2>&1 &
 """
 
 import os
@@ -212,9 +212,9 @@ def main():
         dist_discriminator = discriminator
 
     optimizer = torch.optim.Adam(tuned_generator.parameters(), lr=args.lr)
-    loss_fn_tuning = nn.MSELoss()
-    loss_fn_reg_l2 = nn.MSELoss()
-    loss_fn_reg_lpips = LPIPSLoss(dist_discriminator)
+    loss_fn_tuning = nn.BCEWithLogitsLoss()
+    loss_fn_reg_l2 = nn.BCEWithLogitsLoss()      # ---> Other type of Loss?
+    loss_fn_reg_lpips = LPIPSLoss(dist_discriminator)       # ----> Probably uncorrect Loss?
 
     history = {'loss': []}
     pbar = tqdm(range(args.steps))

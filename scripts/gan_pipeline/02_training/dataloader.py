@@ -7,49 +7,73 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 class FaciesDataset(Dataset):
-    def __init__(self, h5_path=None, num_samples=None, nz=32, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, one_hot_all=False, preload_ram=True, unique_raw_facies=None, **kwargs):        
+    """ 
+    A PyTorch Dataset for loading and processing facies data from an HDF5 file.
+
+    This dataset handles loading 3D or 2D facies arrays from an HDF5 file, mapping their raw integer values to defined classes, and applying preprocessing 
+    such as one-hot encoding and scaling. It also supports preloading data into RAM to minimize disk I/O bottlenecks during training.
+
+    Attributes:
+        h5_path (str): Path to the HDF5 file containing the data.
+        nz (int): Slicing parameter, typically determining the number of depth slices loaded.
+        use_one_hot (bool): Indicates if the loaded data is converted to a one-hot representation.
+        preload_ram (bool): Indicates if the dataset slices are preloaded into memory.
+        length (int): Total number of samples along the primary axis of the dataset.
+        data_cache (numpy.ndarray): In-memory cache of the data (if preload_ram is True).
+        mapping (numpy.ndarray): Look-up array for fast forward mapping of facies values.
+        reverse_mapping (dict): Dictionary mapping new values back to a representative raw value.
+    """
+    def __init__(self, h5_path, num_samples, nz=32, facies_mapping=None, save_mapping_dir=None, use_one_hot=True, preload_ram=True, **kwargs):
+        """
+        Initializes the FaciesDataset.
+
+        Args:
+            h5_path (str): Path to the HDF5 file containing the 'facies' dataset.
+            nz (int, optional): The number of elements to slice from the end of the first 
+                dimension (e.g., depth or sequence). Defaults to 64.
+            facies_mapping (dict, optional): Dictionary defining a custom mapping from raw 
+                facies values to new class indices. If None, a default 3-class mapping is used. 
+                Defaults to None.
+            save_mapping_dir (str, optional): Directory path where the mapping configuration 
+                should be saved as a JSON file. Defaults to None.
+            use_one_hot (bool, optional): Whether to one-hot encode the processed data and scale 
+                it to [-1.0, 1.0]. Defaults to True.
+            preload_ram (bool, optional): Whether to load the targeted slice of the dataset 
+                into RAM upon initialization. Defaults to True.
+            **kwargs: Additional keyword arguments.
+
+        Raises:
+            KeyError: If the 'facies' key is not found within the specified HDF5 file.
+        """
         self.h5_path = h5_path
         self.nz = nz
         self.use_one_hot = use_one_hot
-        self.one_hot_all = one_hot_all
         self.preload_ram = preload_ram
         
-        # 1. Load h5py file
-        if self.h5_path is not None:
-            with h5py.File(self.h5_path, 'r') as h5f:               
-                if 'facies' not in h5f:
-                    raise KeyError(f"Dataset 'facies' not found in {self.h5_path}")
-                
-                total_length = h5f['facies'].shape[0]
-                self.length = min(num_samples, total_length) if num_samples is not None else total_length
-                
-                if self.preload_ram:
-                    self.data_cache = h5f['facies'][:self.length, -nz:, :, :].astype(np.uint8) 
-        else:
-            self.length = 1
-            self.preload_ram = False
-        
-        # 2. Define facies mapping: Two options: either use one hot all or divert back to 3 classes (FA1, FA2 and FA3) 
-        if facies_mapping is None:
-            if self.one_hot_all:
-                if unique_raw_facies is None:
-                    raise ValueError("unique_raw_facies must be provided if one_hot_all is True")
-                self.num_classes = len(unique_raw_facies)
-                self.mapping = np.zeros(max(unique_raw_facies) + 1, dtype=np.int64)
-                self.reverse_mapping = {}
-                
-                # Dynamically map whatever values exist to 0, 1, 2, 3...
-                for new_idx, raw_val in enumerate(sorted(unique_raw_facies)):
-                    self.mapping[raw_val] = new_idx
-                    self.reverse_mapping[new_idx] = raw_val
+        with h5py.File(self.h5_path, 'r') as h5f:               # Open the HDF5 file to read metadata and optionally preload data into RAM
+            if 'facies' not in h5f:
+                raise KeyError(f"Dataset 'facies' not found in {self.h5_path}")
+            
+            total_length = h5f['facies'].shape[0]
+            
+            if num_samples is not None:
+                self.length = min(num_samples, total_length)
             else:
-                self.mapping = np.zeros(13, dtype=np.int64)
-                self.mapping[1:4] = 0   
-                self.mapping[4:8] = 1 
-                self.mapping[8:13] = 2
-                self.reverse_mapping = {0: 1, 1: 4, 2: 8}
-
-        # 2.1. Custom facies mapping
+                self.length = total_length
+            
+            if self.preload_ram:
+                print(f"Loading {self.length} samples into RAM. Please wait...")
+                self.data_cache = h5f['facies'][:self.length, -nz:, :, :] # Loads based on the strictly defined length
+                num_loaded, depth, height, width = self.data_cache.shape
+                print(f"Loading {num_loaded} samples into RAM complete!\n")
+        
+        # Define mappings   
+        if facies_mapping is None:
+            self.mapping = np.zeros(13, dtype=np.int64)
+            self.mapping[1:4] = 0   
+            self.mapping[4:8] = 1   
+            self.mapping[8:13] = 2  
+            self.reverse_mapping = {0: 1, 1: 4, 2: 8}
         else:
             max_val = max(facies_mapping.keys())
             self.mapping = np.zeros(max_val + 1, dtype=np.int64)
@@ -58,6 +82,7 @@ class FaciesDataset(Dataset):
                 self.mapping[raw_val] = new_val
                 if new_val not in self.reverse_mapping:
                     self.reverse_mapping[new_val] = raw_val
+
         if save_mapping_dir:
             self._save_mapping(save_mapping_dir)
 
@@ -75,9 +100,8 @@ class FaciesDataset(Dataset):
         config_path = os.path.join(save_dir, "facies_mapping_config.json")
         config = {
             "forward_mapping_array": self.mapping.tolist(),
-            "representative_reverse_mapping": {str(k): v for k, v in self.reverse_mapping.items()}, # Stringify keys for clean JSON serializing
-            "used_one_hot": self.use_one_hot,
-            "num_classes": self.num_classes
+            "representative_reverse_mapping": self.reverse_mapping,
+            "used_one_hot": self.use_one_hot
         }
         with open(config_path, "w") as f:
             json.dump(config, f, indent=4)
@@ -86,58 +110,33 @@ class FaciesDataset(Dataset):
         return self.length
 
     def __getitem__(self, idx):
-        is_inspecting = isinstance(idx, str) and idx.endswith('.npy')
-        
-        if is_inspecting:
-            data = np.load(idx).astype(np.uint8)
-            print(f"\n--- INSPECTING: {idx} ---")
-            print(f"1. RAW DATA    | Shape: {data.shape} | Unique Vals: {np.unique(data)}")
-        elif self.preload_ram:
+        """
+        Retrieves and processes a specific sample from the dataset.
+
+        Fetches the raw data slice either from the RAM cache or directly from disk,
+        applies the defined facies mapping, and formats the output tensor (scaling and/or 
+        one-hot encoding based on initialization parameters).
+
+        Args:
+            idx (int): The index of the sample to retrieve.
+
+        Returns:
+            dict: A dictionary containing the processed PyTorch tensor under the key 'data'.
+        """
+        if self.preload_ram:
             data = self.data_cache[idx]
         else:
             with h5py.File(self.h5_path, 'r') as h5f:
-                data = h5f['facies'][idx].astype(np.uint8)
+                data = h5f['facies'][idx]
         
         mapped_data = self.mapping[data]
-        
-        if is_inspecting:
-            print(f"2. MAPPED DATA | Shape: {mapped_data.shape} | Unique Vals: {np.unique(mapped_data)}")
-            
-        tensor_data = torch.from_numpy(mapped_data).long()
+        tensor_data = torch.from_numpy(mapped_data)
         
         if self.use_one_hot:
-            dims = len(tensor_data.shape) + 1 
-            permute_order = (dims - 1,) + tuple(range(dims - 1))
-            
-            processed_data = F.one_hot(tensor_data, num_classes=self.num_classes).permute(*permute_order).float()
-            
+            processed_data = F.one_hot(tensor_data, num_classes=3).permute(3, 0, 1, 2).float()
             processed_data = (processed_data * 2.0) - 1.0
         else:
             processed_data = tensor_data.unsqueeze(0).float()
             processed_data = processed_data - 1.0
 
-        if is_inspecting:
-            print(f"3. FINAL TENSOR| Shape: {processed_data.shape} | Unique Vals: {torch.unique(processed_data).tolist()}\n")
-
         return {'data': processed_data}
-
-
-# if __name__ == "__main__":
-#     TEST_NPY_PATH = "data/test_outputs_lower_plain_delta_nz_32/sample_1_facies.npy"
-    
-#     # 1. Create a quick dummy .npy file if you don't have one ready
-#     if not os.path.exists(TEST_NPY_PATH):
-#         # Creates a 32x64x64 array containing only raw facies values 1, 5, and 12
-#         dummy_data = np.random.choice([1, 5, 12], size=(32, 64, 64)).astype(np.uint8)
-#         np.save(TEST_NPY_PATH, dummy_data)
-
-#     # 2. Initialize the dataset with NO h5_path (h5_path=None)
-#     # This sets up the mapping logic without touching disk I/O
-#     dataset = FaciesDataset(
-#         h5_path=None, 
-#         use_one_hot=True, 
-#         one_hot_all=True
-#     )
-    
-#     # 3. Feed it the .npy path directly to trigger the printouts
-#     _ = dataset[TEST_NPY_PATH]

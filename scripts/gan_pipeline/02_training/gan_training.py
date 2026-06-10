@@ -1,3 +1,5 @@
+################################################################################
+# Imports
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="h5py")
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -27,17 +29,31 @@ from voxgan.networks.utils import initialize_weights_normal
 from voxgan.models.loss import R1Regularization
 from voxgan.models.metrics import MSSWD, LoS
 
-import torch.nn.functional as F
+# --- Metric name wrapper class ---
+class ChannelAwareMSSWD(MSSWD):
+    """
+    A wrapper around VoxGAN's MSSWD metric that allows us to assign 
+    a custom name for CSV logging, preventing column overwrites.
+    """
+    def __init__(self, name, **kwargs):
+        super().__init__(**kwargs)
+        self.custom_name = name
+
+    def __str__(self):
+        return self.custom_name
 
 def main():
     config = parse_hybrid_args()
 
+    ################################################################################
+    # Setting
     np.random.seed(43)
     torch.manual_seed(43)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.backends.cuda.matmul.allow_tf32 = True
 
+    # Setup run directory
     run_dir = os.path.join(config['output_dir'], config['run_name'])
     os.makedirs(run_dir, exist_ok=True)
     
@@ -45,61 +61,41 @@ def main():
     config_save_path = os.path.join(run_dir, "config.json")
     save_config(config, config_save_path)
     print(f"Saved run configuration to: {config_save_path}")
+
+    # Validate the dataset before training
     validate_dataset(config['data_file'])
 
-
+    ################################################################################
+    # Model configuration
     model_name = 'architecture_4_dcgan'
     nz = 100
     nl = (3, 5, 5)
-    ngf = 64
-    ndf = ngf
-    max_factor = 16
-    last_activation = nn.Tanh
-    use_one_hot = not config['disable_one_hot']
-    one_hot_all = config.get('one_hot_all', False)
     
-    with h5py.File(config['data_file'], 'r') as h5f:
-        unique_raw_facies = np.unique(h5f['facies'][0]).tolist()
-        
-    if use_one_hot:
-        nc = len(unique_raw_facies) if one_hot_all else 3
-        encoding_tag = "one_hot_all" if one_hot_all else "one_hot"
-    else:
-        nc = 1
-        encoding_tag = "no_one_hot"
+    use_one_hot = not config['disable_one_hot']
+    nc = 3 if use_one_hot else 1
+    encoding_tag = "one_hot" if use_one_hot else "no_one_hot"
+    
+    # Strictly matching working script: Always use Tanh for output bounds
+    last_activation = nn.Tanh
 
     generator = partial(resnet.DeepGenerator3d,
-                        nz=nz, 
-                        ngf=ngf, 
-                        nc=nc, 
-                        nl=nl,
-                        max_factor=max_factor, 
-                        residual_weight=1., 
-                        mode='nearest', 
-                        kernel_size=3,
+                        nz=nz, ngf=64, nc=nc, nl=nl,
+                        max_factor=16, residual_weight=1., mode='nearest', kernel_size=3,
                         layer_normalization=nn.BatchNorm3d,
                         last_layer_normalization=nn.BatchNorm3d,
                         weight_normalization=nn.utils.parametrizations.spectral_norm,
                         activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
                         last_activation=last_activation,
-                        use_double_conv=False, 
-                        use_double_resblocks=False,
-                        use_attention=False, 
-                        skip_z=False, 
-                        split_z=False)
+                        use_double_conv=False, use_double_resblocks=False,
+                        use_attention=False, skip_z=False, split_z=False)
 
     discriminator = partial(resnet.DeepDiscriminator3d,
-                            ndf=ndf, 
-                            nc=nc, 
-                            nl=nl,
-                            max_factor=16, 
-                            residual_weight=1., 
-                            kernel_size=3,
+                            ndf=64, nc=nc, nl=nl,
+                            max_factor=16, residual_weight=1., kernel_size=3,
                             layer_normalization=None,
                             weight_normalization=nn.utils.parametrizations.spectral_norm,
                             activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
-                            use_double_conv=False, 
-                            use_double_resblocks=False,
+                            use_double_conv=False, use_double_resblocks=False,
                             use_attention=False)
 
     optimizer_generator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
@@ -113,27 +109,37 @@ def main():
     ################################################################################
     # Validation
     metric_params = dict(n_levels=3,
-                         n_descriptors=1024,
-                         descriptor_size=(3, 7, 7),
+                         n_descriptors=512,
+                         descriptor_size=(4, 7, 7),
                          n_repeat=12,
-                         n_proj=256,
+                         n_proj=128,
                          padding_mode='circular', 
                          combine_levels=True, 
                          batch_size=config['val_batch_size'],
                          n_gpu=config['num_gpus'])
 
     #### COMMENT: increase n_descriptors in the MSSWD metric -> larger 3D blocks so more information to be processed!
+    # if use_one_hot:
+    #     metrics = [MSSWD(**metric_params, channel=c) for c in range(nc)]
+    # else:
+    #     ms_swd = MSSWD(**metric_params)
+    #     los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
+    #     metrics = [ms_swd, los]
     if use_one_hot:
-        ms_swd_fa1 = MSSWD(**metric_params, channel=0)
-        ms_swd_fa2 = MSSWD(**metric_params, channel=1)
-        ms_swd_fa3 = MSSWD(**metric_params, channel=2)
-
-        #los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
-        metrics = [ms_swd_fa1, ms_swd_fa2, ms_swd_fa3]
+        metrics = []
+        for c in range(nc):
+            metric_name = f"MS-SWD_Ch{c}"
+            ms_swd = ChannelAwareMSSWD(name=metric_name, channel=c, **metric_params)
+            metrics.append(ms_swd)
+            
+        # Optional: Add LoS if you still want it tracked
+        # los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
+        # metrics.append(los)
+        
     else:
-        ms_swd = MSSWD(**metric_params)
-        los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
-        metrics = [ms_swd, los]
+        ms_swd = ChannelAwareMSSWD(name="MS-SWD", **metric_params)
+        # los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
+        metrics = [ms_swd]
 
     ################################################################################
     # Dataset
@@ -144,8 +150,6 @@ def main():
                       num_samples = config['num_samples'],
                       save_mapping_dir=run_dir,
                       use_one_hot=use_one_hot,
-                      one_hot_all=one_hot_all,
-                      unique_raw_facies=unique_raw_facies, 
                       dataset_name=dataset_name,
                       num_epochs=config['epochs'])
 
@@ -160,7 +164,7 @@ def main():
                         discriminator,
                         output_dir_path=run_dir,
                         output_label=output_label,
-                        verbose=1,
+                        verbose=2,
                         num_gpus=config['num_gpus'],
                         num_nodes=1,
                         distributed=False,
@@ -173,7 +177,7 @@ def main():
                       loss_discriminator,
                       initialize_weights=initialize_weights_normal,
                       num_iter_discriminator=1,
-                      num_accumulated=1,
+                      num_accumulated=1, # Match fluvgan perfectly
                       fake_label_generator=1.,
                       real_label_discriminator=1.0,
                       fake_label_discriminator=0.0,
@@ -226,13 +230,7 @@ def main():
                 plot_losses(csv_path, run_dir)
                 
                 # Generate realizations
-                generate_realizations(
-                    ckpt_path=final_checkpoint_path, 
-                    output_dir=run_dir, 
-                    nc=nc, 
-                    nl=nl,
-                    num_realizations=100
-                )
+                generate_realizations(final_checkpoint_path,run_dir,nc,nl)
                 print("Post-training visualization complete.")
             except ImportError as e:
                 print(f"Could not import visualization modules: {e}")

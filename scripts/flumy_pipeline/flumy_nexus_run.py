@@ -15,11 +15,11 @@ from joblib import Parallel, delayed
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert directory of .npz/.npy files to a single .h5 file")
-    parser.add_argument('--num_files', type=int, default=1000, help='Number of Flumy samples to generate (default: 20000)')
+    parser.add_argument('--num_files', type=int, default=10000, help='Number of Flumy samples to generate (default: 20000)')
     parser.add_argument('--num_workers', type=int, default=16, help='Number of parallel workers (default: 8)')
     parser.add_argument('--ntg', type=float, default=0.67, help='Net-to-Gross ratio for the Flumy simulations (default: 0.67)')
-    parser.add_argument('--max_ch_depth', type=int, default=5, help='Maximum channel depth in meters (default: 6)')
-    parser.add_argument('--isbx', type=int, default=80, help='Number of grid blocks in the X direction (default: 100)')
+    parser.add_argument('--max_ch_depth', type=int, default=7, help='Maximum channel depth in meters (default: 6)')
+    parser.add_argument('--isbx', type=int, default=120, help='Number of grid blocks in the X direction (default: 100)')
     
     return parser.parse_args()
 

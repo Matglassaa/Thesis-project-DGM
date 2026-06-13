@@ -12,8 +12,8 @@ import torch.nn.functional as F
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
     parser.add_argument('--csv_path', type=str, default='outputs/2000_training_samples/RUN_2000_samples_128xy_dataset_50_epochs/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/post_training/10000_training_samples/RUN_10000_samples_5_epochs_bs_64_val_size_015_one_hot_label_smoothing/architecture_4_dcgan_samples_one_hot_all_epochs_5_bs_64_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default='outputs/post_training/10000_training_samples/RUN_10000_samples_5_epochs_bs_64_val_size_015_one_hot_label_smoothing/realizations', help='Output folder')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/post_training/10000_training_samples/100_epochs_3_classes_wgas_nexus_100_isbx/architecture_4_wgan_gp_samples_one_hot_epochs_100_bs_64_run_1.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default='outputs/post_training/10000_training_samples/architecture_4_wgan_gp_samples_one_hot_epochs_100_bs_64_run_1/realizations', help='Output folder')
     parser.add_argument('--num_reals', type=int, default=100, help='Number of realizations to generate')
 
     return parser.parse_args()
@@ -67,14 +67,16 @@ def plot_losses(csv_path, output_dir):
     plt.close()
     print(f"Loss plot saved to: {save_path}")
 
-def generate_realizations(ckpt_path, output_dir, nc=9, nl = (3,5,5), num_realizations=100):
+def generate_realizations(ckpt_path, output_dir, nc=3, nl = (3,5,5), num_realizations=100):
     if not os.path.exists(ckpt_path):
         print(f"Checkpoint not found at '{ckpt_path}'. Skipping generation.")
         return
+    output_dir = os.path.join(output_dir,'realizations')
+    os.makedirs(output_dir, exist_ok=True)
 
     last_activation = nn.Tanh
     nz = 100
-    ngf = 64
+    ngf = 32
     max_factor = 16
 
     print("Building Generator...")
@@ -123,10 +125,8 @@ def generate_realizations(ckpt_path, output_dir, nc=9, nl = (3,5,5), num_realiza
 
 def main():
     args = parse_args()
-    output_dir = os.path.join(args.output_dir,'realizations')
-    os.makedirs(output_dir, exist_ok=True)
     #plot_losses(args.csv_path, args.output_dir)
-    generate_realizations(ckpt_path=args.ckpt_path, output_dir=output_dir, num_realizations=args.num_reals)
+    generate_realizations(ckpt_path=args.ckpt_path, output_dir=args.output_dir, num_realizations=args.num_reals)
 
 if __name__ == '__main__':
     main()

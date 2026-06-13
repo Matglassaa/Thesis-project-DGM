@@ -101,7 +101,7 @@ def main():
     parser.add_argument('--nc', type=int, default=3, help="Number of facies channels")
     parser.add_argument('--n_samples', type=int, default=10, help="Number of realizations to optimize")
     parser.add_argument('--lr', type=float, default=0.01, help="Learning rate for latent optimization")
-    parser.add_argument('--steps', type=int, default=1500, help="Number of optimization steps")
+    parser.add_argument('--steps', type=int, default=3000, help="Number of optimization steps")
     parser.add_argument('--threshold', type=float, default=10.0, help="Distance threshold for context loss")
     
     args = parser.parse_args()

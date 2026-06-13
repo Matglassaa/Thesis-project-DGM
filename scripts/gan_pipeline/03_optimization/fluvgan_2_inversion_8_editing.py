@@ -50,26 +50,25 @@ class LPIPSLoss(_Loss):
     def __init__(self, discriminator, reduction='mean', eps=1e-12):
         super(LPIPSLoss, self).__init__(None, None, None)
         self.discriminator = discriminator
-        if reduction == 'mean':
-            self.reduction = torch.mean
-        elif reduction == 'sum':
-            self.reduction = torch.sum
-        else:
-            self.reduction = lambda x: x
+        self.reduction = torch.mean if reduction == 'mean' else (torch.sum if reduction == 'sum' else lambda x: x)
         self.eps = eps
 
     def forward(self, input, target):
         loss = 0.
-        # Handle DataParallel if needed
         disc = self.discriminator.module if isinstance(self.discriminator, nn.DataParallel) else self.discriminator
         
+        curr_input = input
+        curr_target = target
+        
         for i in range(len(disc.main) - 1):
-            input = disc.main[i](input)
-            input = F.normalize(input, eps=self.eps, dim=1)
-            target = disc.main[i](target)
-            target = F.normalize(target, eps=self.eps, dim=1)
-            # Perceptual difference in 3D: (B, C, Z, Y, X) -> sum over C, mean over space
-            loss += torch.mean(torch.sum((input - target)**2, 1), (1, 2, 3))
+            curr_input = disc.main[i](curr_input)
+            curr_target = disc.main[i](curr_target)
+            
+            # Normalize ONLY for the distance calculation
+            norm_input = F.normalize(curr_input, eps=self.eps, dim=1)
+            norm_target = F.normalize(curr_target, eps=self.eps, dim=1)
+            
+            loss += torch.mean(torch.sum((norm_input - norm_target)**2, 1), (1, 2, 3))
 
         return self.reduction(loss)
 
@@ -92,7 +91,7 @@ def main():
     parser.add_argument('--nz', type=int, default=100, help="Latent vector size")
     parser.add_argument('--nc', type=int, default=3, help="Number of facies channels")
     parser.add_argument('--batch_size', type=int, default=32, help="Batch size for tuning")
-    parser.add_argument('--lr', type=float, default=3e-4, help="Learning rate for generator tuning")
+    parser.add_argument('--lr', type=float, default=3e-5, help="Learning rate for generator tuning")
     parser.add_argument('--steps', type=int, default=1000, help="Number of tuning steps")
     
     args = parser.parse_args()
@@ -102,7 +101,7 @@ def main():
 
     # Automate output directory structure
     model_parent = Path(args.model_path).parent.name
-    final_output_dir = os.path.join(args.output_dir, model_parent, 'editing')
+    final_output_dir = os.path.join(args.output_dir, model_parent)
     realizations_dir = os.path.join(final_output_dir, 'realizations')
     os.makedirs(realizations_dir, exist_ok=True)
 
@@ -123,7 +122,7 @@ def main():
                                        layer_normalization=nn.BatchNorm3d,
                                        last_layer_normalization=nn.BatchNorm3d,
                                        weight_normalization=nn.utils.parametrizations.spectral_norm,
-                                       activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
+                                       activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=False),
                                        last_activation=nn.Tanh,
                                        use_double_conv=False,
                                        use_double_resblocks=False,
@@ -139,7 +138,7 @@ def main():
                                                kernel_size=3,
                                                layer_normalization=None,
                                                weight_normalization=nn.utils.parametrizations.spectral_norm,
-                                               activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
+                                               activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=False),
                                                use_double_conv=True, # Matches training
                                                use_double_resblocks=False,
                                                use_attention=False)
@@ -212,9 +211,10 @@ def main():
         dist_discriminator = discriminator
 
     optimizer = torch.optim.Adam(tuned_generator.parameters(), lr=args.lr)
-    loss_fn_tuning = nn.BCEWithLogitsLoss()
-    loss_fn_reg_l2 = nn.BCEWithLogitsLoss()      # ---> Other type of Loss?
-    loss_fn_reg_lpips = LPIPSLoss(dist_discriminator)       # ----> Probably uncorrect Loss?
+    
+    loss_fn_tuning = nn.L1Loss()        # Use L1 or MSE for tuning against [-1, 1] targets
+    loss_fn_reg_l2 = nn.MSELoss()       # Use true L2 loss for comparing the [-1, 1] generator outputs 
+    loss_fn_reg_lpips = LPIPSLoss(dist_discriminator)
 
     history = {'loss': []}
     pbar = tqdm(range(args.steps))
@@ -251,6 +251,8 @@ def main():
             loss_reg_lpips = loss_fn_reg_lpips(samples_tuned, samples_orig)
             
             # weighting from Roich et al. (2021) adapted for this setup
+            # # Increase LPIPS weight from 0.1 to 0.5 (or even 1.0) to hold the structural geology together
+            # loss = loss_tuning + 0.5 * loss_reg_lpips + 0.1 * loss_reg_l2
             loss = loss_tuning + 0.1 * (loss_reg_lpips + 1.0 * loss_reg_l2)
             
             loss = loss * (curr_batch_size / n_samples)

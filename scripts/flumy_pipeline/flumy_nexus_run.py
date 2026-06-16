@@ -15,11 +15,11 @@ from joblib import Parallel, delayed
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert directory of .npz/.npy files to a single .h5 file")
-    parser.add_argument('--num_files', type=int, default=10000, help='Number of Flumy samples to generate (default: 20000)')
-    parser.add_argument('--num_workers', type=int, default=16, help='Number of parallel workers (default: 8)')
+    parser.add_argument('--num_files', type=int, default=8, help='Number of Flumy samples to generate (default: 20000)')
+    parser.add_argument('--num_workers', type=int, default=8, help='Number of parallel workers (default: 8)')
     parser.add_argument('--ntg', type=float, default=0.67, help='Net-to-Gross ratio for the Flumy simulations (default: 0.67)')
-    parser.add_argument('--max_ch_depth', type=int, default=7, help='Maximum channel depth in meters (default: 6)')
-    parser.add_argument('--isbx', type=int, default=120, help='Number of grid blocks in the X direction (default: 100)')
+    parser.add_argument('--max_ch_depth', type=int, default=4, help='Maximum channel depth in meters (default: 6)')
+    parser.add_argument('--isbx', type=int, default=90, help='Number of grid blocks in the X direction (default: 100)')
     
     return parser.parse_args()
 
@@ -55,14 +55,16 @@ def save_config(config, num_samples, output_dir):
 def setup_directories(base_dir):
     """Creates the necessary directory structure for saving samples."""
     facies_dir = os.path.join(base_dir, 'samples', 'facies')
+    grain_dir = os.path.join(base_dir, 'samples', 'grain')
     age_dir = os.path.join(base_dir, 'samples', 'age')
     
     os.makedirs(facies_dir, exist_ok=True)
+    os.makedirs(grain_dir, exist_ok=True)
     os.makedirs(age_dir, exist_ok=True)
     
-    return facies_dir, age_dir
+    return facies_dir, grain_dir, age_dir
 
-def flumy_worker(sim_id, base_seed, input_params, facies_dir, age_dir, max_retries=5):
+def flumy_worker(sim_id, base_seed, input_params, facies_dir, grain_dir, age_dir, max_retries=5):
     """
     Worker function to generate a single Flumy simulation with automatic retries.
     Uses the non-expert API parameters: hmax, isbx, ng, zul.
@@ -106,7 +108,7 @@ def flumy_worker(sim_id, base_seed, input_params, facies_dir, age_dir, max_retri
                 continue # Skip to next attempt
 
             # Extract the middle block
-            facies, _, age = flsim.getBlock(dz=dz, zb=bottom_cut, nz=target_nz)
+            facies, grain, age = flsim.getBlock(dz=dz, zb=bottom_cut, nz=target_nz)
 
             # Replace any 255 values with 1 to ensure valid facies labels
             facies[facies == 255] = 1
@@ -121,19 +123,22 @@ def flumy_worker(sim_id, base_seed, input_params, facies_dir, age_dir, max_retri
                 
             # --- TRANSPOSE ARRAYS ---
             facies_zyx = np.transpose(facies, (2, 1, 0))
+            grain_zyx = np.transpose(grain,(2,1,0))
             age_zyx = np.transpose(age, (2, 1, 0))
             
             # File paths
             facies_path = os.path.join(facies_dir, f"sample_{unique_seed}.npy")
+            grain_path = os.path.join(grain_dir, f"sample_{unique_seed}.npy")
             age_path = os.path.join(age_dir, f"sample_{unique_seed}.npy")
             
             # Save the transposed arrays
             np.save(facies_path, facies_zyx)
+            np.save(grain_path, grain_zyx)
             np.save(age_path, age_zyx)
             
             # --- FILE VALIDATION BLOCK ---
             all_valid = True
-            for filepath in [facies_path, age_path]:
+            for filepath in [facies_path, grain_path, age_path]:
                 # 1. OS-level check for completely empty files (0 bytes)
                 if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
                     all_valid = False
@@ -159,7 +164,7 @@ def flumy_worker(sim_id, base_seed, input_params, facies_dir, age_dir, max_retri
                 return True
             else:
                 # Clean up the corrupted files before retrying
-                for filepath in [facies_path, age_path]:
+                for filepath in [facies_path, grain_path, age_path]:
                     if os.path.exists(filepath):
                         os.remove(filepath)
                 print(f"[{unique_seed}] Generation failed validation. Retrying (Attempt {attempt}/{max_retries})...")
@@ -197,7 +202,7 @@ def main():
 
     # Determine base path based on OS and set up directories
     base_path = os_check(num_samples=NUM_SAMPLES, ntg=args.ntg, max_ch_depth=args.max_ch_depth, isbx=args.isbx)
-    facies_dir, age_dir = setup_directories(base_path)
+    facies_dir, grain_dir, age_dir = setup_directories(base_path)
 
     # Save the configuration for reproducibility
     save_config(INPUT_PARAMS, NUM_SAMPLES, base_path)
@@ -218,6 +223,7 @@ def main():
             base_seed=BASE_SEED,
             input_params=INPUT_PARAMS,
             facies_dir=facies_dir,
+            grain_dir=grain_dir,
             age_dir=age_dir
         ) for sid in sample_ids
     )

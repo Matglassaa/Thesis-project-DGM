@@ -174,6 +174,101 @@ class WellMismatch:
         
         return df_results
 
+    def plot_vpc(self, num_realizations=10, save_plot=False, output_dir='outputs'):
+        """Calculates and plots the Vertical Proportion Curve (VPC) comparing Well vs GAN data."""
+        print(f"\n--- Generating Vertical Proportion Curves (VPC) ---")
+        if not self.well_coords:
+            print("No well data loaded. Cannot compute VPC.")
+            return
+
+        # 1. Set up depth parameters
+        # Based on your well loading logic, we evaluate 32 meters
+        max_z = 32
+        facies_codes = [1, 4, 8]
+        facies_colors = {1: '#f1970f', 4: '#fffc65', 8: '#33ff00'}
+        facies_labels = {1: 'Channel', 4: 'Splay', 8: 'Floodplain'}
+
+        # 2. Calculate Well VPC
+        well_vpc = {f: np.zeros(max_z) for f in facies_codes}
+        well_counts_per_z = np.zeros(max_z)
+
+        # Tally the facies at each depth index from the exact well locations
+        for (z, y, x), f_val in zip(self.well_coords, self.well_true_facies):
+            if z < max_z:
+                well_vpc[f_val][z] += 1
+                well_counts_per_z[z] += 1
+
+        # Normalize counts into proportions (0.0 to 1.0)
+        for f in facies_codes:
+            # Avoid division by zero where we have no well data
+            safe_counts = np.where(well_counts_per_z == 0, 1, well_counts_per_z)
+            well_vpc[f] = well_vpc[f] / safe_counts
+            # Set to NaN so matplotlib doesn't plot zeros where data is missing
+            well_vpc[f][well_counts_per_z == 0] = np.nan 
+
+        # 3. Calculate GAN VPC
+        gan_vpc = {f: np.zeros(max_z) for f in facies_codes}
+        files_to_process = self.data_files[:num_realizations]
+        
+        print(f"Processing {len(files_to_process)} GAN realizations for global VPC...")
+        for file_path in files_to_process:
+            grid = self._load_and_map_realization(file_path)
+            z_dim, y_dim, x_dim = grid.shape
+            cells_per_slice = y_dim * x_dim
+            
+            for f in facies_codes:
+                # Count occurrences of facies 'f' in every Z-slice, divide by total area
+                proportions = np.sum(grid == f, axis=(1, 2)) / cells_per_slice
+                gan_vpc[f] += proportions[:max_z]
+                
+        # Average the GAN proportions across all processed realizations
+        for f in facies_codes:
+            gan_vpc[f] /= len(files_to_process)
+
+        # 4. Render the Plot
+        fig, axes = plt.subplots(1, 2, figsize=(12, 8), sharey=True)
+        z_array = np.arange(max_z)
+
+        # Plot Well Data
+        for f in facies_codes:
+            axes[0].plot(well_vpc[f], z_array, color=facies_colors[f], 
+                         label=facies_labels[f], linewidth=2.5, marker='o', markersize=4)
+        
+        axes[0].set_title('Well Data VPC (Local)', fontsize=14)
+        axes[0].set_ylabel('Depth (Z-index)', fontsize=12)
+        axes[0].set_xlabel('Proportion', fontsize=12)
+        axes[0].invert_yaxis() # Depth typically goes down
+        axes[0].set_xlim(0, 1)
+        axes[0].grid(True, linestyle='--', alpha=0.7)
+
+        # Plot GAN Data
+        for f in facies_codes:
+            axes[1].plot(gan_vpc[f], z_array, color=facies_colors[f], 
+                         linewidth=2.5)
+            # Add a subtle fill for better readability
+            axes[1].fill_betweenx(z_array, 0, gan_vpc[f], color=facies_colors[f], alpha=0.1)
+
+        axes[1].set_title(f'GAN Data VPC (Global Mean of {len(files_to_process)} samples)', fontsize=14)
+        axes[1].set_xlabel('Proportion', fontsize=12)
+        axes[1].set_xlim(0, 1)
+        axes[1].grid(True, linestyle='--', alpha=0.7)
+
+        # Shared Legend
+        handles = [plt.Line2D([0], [0], color=facies_colors[f], lw=4) for f in facies_codes]
+        fig.legend(handles, [facies_labels[f] for f in facies_codes], 
+                   loc='lower center', ncol=3, bbox_to_anchor=(0.5, -0.05), fontsize=12)
+
+        plt.suptitle("Vertical Proportion Curve: Well Conditioning vs. GAN Generation", fontsize=16)
+        plt.tight_layout()
+
+        if save_plot:
+            os.makedirs(output_dir, exist_ok=True)
+            plot_path = os.path.join(output_dir, f"vpc_comparison_{num_realizations}_samples.png")
+            plt.savefig(plot_path, bbox_inches='tight', dpi=300)
+            print(f"Saved VPC plot to: {plot_path}")
+
+        plt.show()
+
 
 class PostProcessing:
     """Handles spatial and statistical validation metrics for GAN-generated geological facies.

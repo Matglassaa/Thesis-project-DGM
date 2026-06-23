@@ -148,29 +148,8 @@ def main():
                             use_double_conv=True, use_double_resblocks=True,
                             use_attention=False)
 
-    # Calculate the total number of steps to define the decay schedule
-    iters_per_epoch = config['num_samples'] // config['batch_size']
-    total_generator_steps = config['epochs'] * iters_per_epoch
-    total_discriminator_steps = total_generator_steps * num_iter_disc
-
-    # 1. Create the lists in the main scope
-    gen_lr_history = []
-    disc_lr_history = []
-
-    # 2. Pass them to the optimizers via partial
-    optimizer_generator = partial(ScheduledAdam, 
-                                  lr=1e-3, 
-                                  betas=(0., 0.99), 
-                                  total_steps=total_generator_steps,
-                                  decay_type='cosine',
-                                  lr_history=gen_lr_history) # Injection here
-
-    optimizer_discriminator = partial(ScheduledAdam, 
-                                      lr=3e-3, 
-                                      betas=(0., 0.99), 
-                                      total_steps=total_discriminator_steps,
-                                      decay_type='cosine',
-                                      lr_history=disc_lr_history) # Injection here
+    optimizer_generator = partial(optim.Adam, lr=1e-3, betas=(0., 0.99))
+    optimizer_discriminator = partial(optim.Adam, lr=3e-3, betas=(0., 0.99))
     
     loss_generator = nn.BCEWithLogitsLoss()
     loss_discriminator = nn.BCEWithLogitsLoss()
@@ -275,21 +254,18 @@ def main():
         ################################################################################
         # Save Learning Rate History
         
-        lr_csv_path = os.path.join(run_dir, f"{output_label}_learning_rates.csv")
+        # lr_csv_path = os.path.join(run_dir, f"{output_label}_learning_rates.csv")
         
-        # Because the discriminator might step multiple times per generator step, 
-        # the lists will be different lengths. We will save them side-by-side by 
-        # padding the shorter list with None (or empty strings).
-        import csv
-        from itertools import zip_longest
+        # import csv
+        # from itertools import zip_longest
         
-        with open(lr_csv_path, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(['Generator_LR', 'Discriminator_LR'])
-            for g_lr, d_lr in zip_longest(gen_lr_history, disc_lr_history, fillvalue=''):
-                writer.writerow([g_lr, d_lr])
+        # with open(lr_csv_path, mode='w', newline='') as file:
+        #     writer = csv.writer(file)
+        #     writer.writerow(['Generator_LR', 'Discriminator_LR'])
+        #     for g_lr, d_lr in zip_longest(gen_lr_history, disc_lr_history, fillvalue=''):
+        #         writer.writerow([g_lr, d_lr])
                 
-        print(f"Saved learning rate tracking to: {lr_csv_path}")
+        # print(f"Saved learning rate tracking to: {lr_csv_path}")
 
         ################################################################################
         # Cleaning Checkpoints and Saving the Final `.pt` File

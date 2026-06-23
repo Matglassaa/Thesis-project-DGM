@@ -39,26 +39,6 @@ if str(scripts_dir) not in sys.path:
     sys.path.append(str(scripts_dir))
 
 
-# --- Centralized configuration ---
-def get_facies_config():
-    """Centralized configuration for facies properties to prevent hardcoding."""
-    return {
-        'codes': [1, 4, 8],
-        'names': {
-            1: 'Sand body deposits',
-            4: 'Crevasse splay & Levee deposits',
-            8: 'Clay deposits'
-        },
-        'colors': {
-            1: '#f1970f',
-            4: '#fffc65',
-            8: '#33ff00'
-        },
-        # Maps 0-indexed categorical outputs to physical codes
-        'mapping': {0: 1, 1: 4, 2: 8} 
-    }
-
-
 class WellMismatch:
     """Quantifies the degree of mismatch between the 3D realizations and the well data.
 
@@ -295,49 +275,43 @@ class WellMismatch:
 class PostProcessing:
     """Handles spatial and statistical validation metrics for GAN-generated geological facies.
 
-    This class loads 3D arrays of geological facies (both Flumy data and GAN-generated),
+    This class loads 3D arrays of geological facies (both real and GAN-generated),
     computes spatial statistics (MPS, connectivity, normalized entropy, JSD), 
     and generates visual diagnostic plots including 3D renders.
 
     Attributes:
         output_dir (str): Directory where generated plots and CSVs will be saved.
-        data_files (list): Sorted list of file paths for the Flumy dataset.
+        real_files (list): Sorted list of file paths for the real dataset.
         gan_files (list): Sorted list of file paths for the GAN-generated dataset.
-        data_samples (list): Loaded Flumy data arrays in memory.
+        real_data (list): Loaded real data arrays in memory.
         gan_data (list): Loaded GAN data arrays in memory.
         facies_mapping (dict): Mapping from categorical indices to specific geological codes.
     """
     
-    def __init__(self, data_name, gan_name, output_dir, data_path, gan_path):
+    def __init__(self, name, output_dir, real_path, gan_path):
         """Initializes the class and locates files, but defers loading to save memory.
 
         Args:
-            data_name (str): Display name for the baseline dataset in plots (e.g., 'Flumy Data').
-            gan_name (str): Display name for the generated dataset in plots.
             output_dir (str): Directory to save outputs (e.g., 'outputs/metrics').
-            data_path (str): Glob pattern matching data files (e.g., 'datasets/*.npy').
+            real_path (str): Glob pattern matching real data files (e.g., 'datasets/*.npy').
             gan_path (str): Glob pattern matching GAN data files (e.g., 'outputs/*.npy').
         """ 
-        self.data_name = data_name
-        self.gan_name = gan_name
+        self.name = name
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         
         self.script_path = pathlib.Path(__file__).resolve()
         self.cwd = pathlib.Path().resolve()
         
-        self.data_files = sorted(glob.glob(str(data_path)))
+        self.real_files = sorted(glob.glob(str(real_path)))
         self.gan_files = sorted(glob.glob(str(gan_path)))
         
-        self.data_samples = []
+        self.real_data = []
         self.gan_data = []
         
-        # Load the centralized configuration
-        self.cfg = get_facies_config()
-        self.facies_mapping = self.cfg['mapping']
-
+        self.facies_mapping = {0: 1, 1: 4, 2: 8}
     
-    def load_data_samples(self, limit=100):
+    def load_flumy_samples(self, limit=100):
         """Loads real data into memory.
         
         Args:
@@ -345,9 +319,9 @@ class PostProcessing:
                 Defaults to 100. Pass None to load all matching files.
         """
         print(f"Loading Real samples (limit: {limit if limit else 'ALL'})...")
-        files_to_load = self.data_files[:limit] if limit else self.data_files
-        self.data_samples = [self._load_data(f) for f in files_to_load]
-        print(f"Loaded {len(self.data_samples)} real samples into memory.")
+        files_to_load = self.real_files[:limit] if limit else self.real_files
+        self.real_data = [self._load_real(f) for f in files_to_load]
+        print(f"Loaded {len(self.real_data)} real samples into memory.")
 
     def load_gan_samples(self, limit=100):
         """Loads GAN data into memory.
@@ -361,7 +335,7 @@ class PostProcessing:
         self.gan_data = [self._load_gan(f) for f in files_to_load]
         print(f"Loaded {len(self.gan_data)} GAN samples into memory.")
 
-    def _load_data(self, file):
+    def _load_real(self, file):
         """Loads a facies array and maps real labels to geological codes.
 
         Args:
@@ -508,12 +482,12 @@ class PostProcessing:
             tuple: (DataFrame of connectivity stats, Real Pattern Counter, GAN Pattern Counter)
         """
         load_limit = sample_limit if sample_limit is not None else 10
-        if getattr(self, 'data_samples', None) is None or getattr(self, 'gan_data', None) is None:
+        if getattr(self, 'real_data', None) is None or getattr(self, 'gan_data', None) is None:
             print(f"Warning: Data not loaded. Auto-loading up to {load_limit} samples...")
-            self.load_data_samples(limit=load_limit)
+            self.load_flumy_samples(limit=load_limit)
             self.load_gan_samples(limit=load_limit)
 
-        real_to_process = self.data_samples[:sample_limit] if sample_limit else self.data_samples
+        real_to_process = self.real_data[:sample_limit] if sample_limit else self.real_data
         gan_to_process = self.gan_data[:sample_limit] if sample_limit else self.gan_data
 
         # Automatically detect unique facies if not provided
@@ -603,8 +577,8 @@ class PostProcessing:
 
         if mode in ['gan', 'both'] and not self.gan_data:
             self.load_gan_samples()
-        if mode in ['real', 'both'] and not self.data_samples:
-            self.load_data_samples()
+        if mode in ['real', 'both'] and not self.real_data:
+            self.load_flumy_samples()
             
         print(f"\n--- Generating Facies Distribution (Mode: {mode.upper()}) ---")
 
@@ -619,7 +593,7 @@ class PostProcessing:
         fig, ax = plt.subplots(figsize=(10, 6))
 
         if mode == 'both':
-            real_percentages = calculate_percentages(self.data_samples)
+            real_percentages = calculate_percentages(self.real_data)
             gan_percentages = calculate_percentages(self.gan_data)
             
             x = np.arange(len(labels))
@@ -639,14 +613,14 @@ class PostProcessing:
                 ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f'{yval:.1f}%', ha='center', va='bottom', fontsize=10, fontweight='bold')
                 
             legend_elements = [
-                mpatches.Patch(facecolor='gray', alpha=0.5, edgecolor='black', label=f'Real Data ({len(self.data_samples)} samples)'),
+                mpatches.Patch(facecolor='gray', alpha=0.5, edgecolor='black', label=f'Real Data ({len(self.real_data)} samples)'),
                 mpatches.Patch(facecolor='gray', hatch='//', edgecolor='black', label=f'GAN Data ({len(self.gan_data)} samples)')
             ]
             ax.legend(handles=legend_elements, loc='upper right', fontsize=11)
             ax.set_title('Facies Volume Distribution: Real vs. GAN', fontsize=14, pad=15)
             
         else:
-            target_data = self.gan_data if mode == 'gan' else self.data_samples
+            target_data = self.gan_data if mode == 'gan' else self.real_data
             percentages = calculate_percentages(target_data)
             
             bars = ax.bar(labels, percentages, color=colors, edgecolor='black', linewidth=1.2)
@@ -702,15 +676,15 @@ class PostProcessing:
             self.load_gan_samples()
         
         # WE MUST LOAD REAL DATA: Even if plotting 'gan', we need 'real' data to compute the baseline H_max
-        if not self.data_samples:
-            self.load_data_samples()
+        if not self.real_data:
+            self.load_flumy_samples()
             
-        target_data = self.gan_data if data_source == 'gan' else self.data_samples
+        target_data = self.gan_data if data_source == 'gan' else self.real_data
         num_total = len(target_data)
         axes_to_plot = [axis] if axis else ['Z', 'Y', 'X']
 
         # NEW LOGIC: Calculate theoretical max entropy strictly from the REAL dataset
-        real_global_probs = self._get_global_proportions(self.data_samples)
+        real_global_probs = self._get_global_proportions(self.real_data)
         h_max = self._calculate_h_max(real_global_probs) * 1.3
         
         print(f"\n--- Generating {data_source.upper()} Normalized Entropy Matrices ---")
@@ -850,11 +824,11 @@ class PostProcessing:
     def compare_structural_delentropy(self):
         """Evaluates and compares the spatial Delentropy of Real vs GAN datasets."""
         if not self.gan_data: self.load_gan_samples()
-        if not self.data_samples: seflumy()
+        if not self.real_data: seflumy()
 
         print("\n--- Computing 3D Spatial Delentropy (Structural Complexity) ---")
         
-        real_entropies = [self.compute_spatial_delentropy(arr) for arr in self.data_samples]
+        real_entropies = [self.compute_spatial_delentropy(arr) for arr in self.real_data]
         gan_entropies = [self.compute_spatial_delentropy(arr) for arr in self.gan_data]
 
         real_mean = np.mean(real_entropies)
@@ -884,9 +858,9 @@ class PostProcessing:
 
         # 1. Load data and select a random realization
         if data_source == 'gan' and not self.gan_data: self.load_gan_samples()
-        if data_source == 'real' and not self.data_samples: seflumy()
+        if data_source == 'real' and not self.real_data: seflumy()
         
-        target_data = self.gan_data if data_source == 'gan' else self.data_samples
+        target_data = self.gan_data if data_source == 'gan' else self.real_data
         volume = target_data[random.randint(0, len(target_data) - 1)]
         
         # Select middle Z-slice if none provided
@@ -969,18 +943,18 @@ class PostProcessing:
                 - dict: Mean and Standard Deviation for Entropy and JSD across the axis.
         """
         if not self.gan_data: self.load_gan_samples()
-        if not self.data_samples: seflumy()
+        if not self.real_data: seflumy()
             
         print(f"\n--- Computing Scalar Metrics for ALL {axis}-Axis Slices ---")
         
-        real_global_probs = self._get_global_proportions(self.data_samples)
+        real_global_probs = self._get_global_proportions(self.real_data)
         h_max = self._calculate_h_max(real_global_probs)
         
         facies_values = [1, 4, 8]
-        num_real_samples = len(self.data_samples)
+        num_real_samples = len(self.real_data)
         num_gan_samples = len(self.gan_data)
         
-        nz, ny, nx = self.data_samples[0].shape
+        nz, ny, nx = self.real_data[0].shape
         dims = {'Z': nz, 'Y': ny, 'X': nx}
         
         # NEW: Evaluate every single slice along the chosen axis
@@ -994,13 +968,13 @@ class PostProcessing:
             with tqdm(total=len(slice_indices), desc=f"JS-entropy 2D ({axis}-axis)") as pbar:
                 for slice_idx in slice_indices:
                     if axis == 'Z':
-                        real_slices = np.array([d[slice_idx, :, :] for d in self.data_samples])
+                        real_slices = np.array([d[slice_idx, :, :] for d in self.real_data])
                         gan_slices = np.array([d[slice_idx, :, :] for d in self.gan_data])
                     elif axis == 'Y':
-                        real_slices = np.array([d[:, slice_idx, :] for d in self.data_samples])
+                        real_slices = np.array([d[:, slice_idx, :] for d in self.real_data])
                         gan_slices = np.array([d[:, slice_idx, :] for d in self.gan_data])
                     else: 
-                        real_slices = np.array([d[:, :, slice_idx] for d in self.data_samples])
+                        real_slices = np.array([d[:, :, slice_idx] for d in self.real_data])
                         gan_slices = np.array([d[:, :, slice_idx] for d in self.gan_data])
                         
                     dim_y, dim_x = real_slices.shape[1], real_slices.shape[2]
@@ -1085,11 +1059,11 @@ class PostProcessing:
         # Ensure data is loaded
         if data_source == 'gan' and not self.gan_data: 
             self.load_gan_samples(limit=num_samples)
-        if data_source == 'real' and not self.data_samples: 
+        if data_source == 'real' and not self.real_data: 
             seflumy(limit=num_samples)
             
-        target_data = self.gan_data if data_source == 'gan' else self.data_samples
-        files_list = self.gan_files if data_source == 'gan' else self.data_files
+        target_data = self.gan_data if data_source == 'gan' else self.real_data
+        files_list = self.gan_files if data_source == 'gan' else self.real_files
         
         plot_limit = min(num_samples, len(target_data))
         print(f"\n--- Generating 2D Slices ({data_source.upper()} Data | {num_slices} Slices | {plot_limit} Samples) ---")
@@ -1228,12 +1202,12 @@ class PostProcessing:
         # 1. Determine which 3D array to plot (Specific File vs Random)
         plot_identifier = ""
         if target_filename:
-            file_list = self.gan_files if data_source == 'gan' else self.data_files
+            file_list = self.gan_files if data_source == 'gan' else self.real_files
             matched_file = next((f for f in file_list if target_filename in f), None)
             
             if matched_file:
                 print(f"Loading specific file: {matched_file}")
-                data_3d = self._load_gan(matched_file) if data_source == 'gan' else self._load_data(matched_file)
+                data_3d = self._load_gan(matched_file) if data_source == 'gan' else self._load_real(matched_file)
                 plot_identifier = target_filename.split('.')[0]
             else:
                 print(f"Warning: '{target_filename}' not found. Falling back to random sample.")
@@ -1243,10 +1217,10 @@ class PostProcessing:
             # Ensure data is loaded for random sampling
             if data_source == 'gan' and not self.gan_data:
                 self.load_gan_samples()
-            elif data_source == 'real' and not self.data_samples:
+            elif data_source == 'real' and not self.real_data:
                 seflumy()
                 
-            target_data = self.gan_data if data_source == 'gan' else self.data_samples
+            target_data = self.gan_data if data_source == 'gan' else self.real_data
             random_idx = random.randint(0, len(target_data) - 1)
             data_3d = target_data[random_idx]
             plot_identifier = f"sample_{random_idx}"
@@ -1363,11 +1337,11 @@ class DistributionEvaluator:
         tensor = torch.tensor(arr, dtype=torch.float32).to(self.device)
         return tensor
 
-    def compute_msswd_mds(self, data_samples, gan_data, random_state=42, save_data=True, load_existing=False):
+    def compute_msswd_mds(self, real_data, gan_data, random_state=42, save_data=True, load_existing=False):
         """Computes pairwise MS-SWD and applies MDS to generate 2D embeddings.
         
         Args:
-            data_samples (list): List of real sample arrays.
+            real_data (list): List of real sample arrays.
             gan_data (list): List of GAN sample arrays.
             random_state (int): Seed for MDS reproducibility.
             save_data (bool): If True, saves the calculated arrays to a .npz file.
@@ -1382,12 +1356,12 @@ class DistributionEvaluator:
             loaded_data = np.load(save_path)
             return loaded_data['real_embeddings'], loaded_data['gan_embeddings'], loaded_data['distances']
 
-        print(f"Preparing tensors for {len(data_samples)} Real and {len(gan_data)} GAN samples...")
-        n_real = len(data_samples)
+        print(f"Preparing tensors for {len(real_data)} Real and {len(gan_data)} GAN samples...")
+        n_real = len(real_data)
         n_gan = len(gan_data)
         total_samples = n_real + n_gan
         
-        real_tensor = self._prepare_tensors(data_samples)
+        real_tensor = self._prepare_tensors(real_data)
         gan_tensor = self._prepare_tensors(gan_data)
         all_samples = torch.cat((real_tensor, gan_tensor), dim=0)
         

@@ -9,6 +9,7 @@ import re
 import os
 from pathlib import Path
 import shutil
+import math
 from functools import partial
 import numpy as np
 from glob import glob
@@ -28,6 +29,48 @@ from voxgan.networks import resnet
 from voxgan.networks.utils import initialize_weights_normal
 from voxgan.models.loss import R1Regularization
 from voxgan.models.metrics import MSSWD, LoS
+
+
+# --- DYNAMIC STEP SIZE CLASS ---
+class ScheduledAdam(optim.Adam):
+    def __init__(self, params, lr=1e-3, total_steps=10000, decay_type='cosine', 
+                 step_size=None, gamma=0.5, lr_history=None, **kwargs):
+        super().__init__(params, lr=lr, **kwargs)
+        self.initial_lr = lr
+        self.total_steps = total_steps
+        self.current_step = 0
+        self.decay_type = decay_type
+        self.step_size = step_size
+        self.gamma = gamma
+        
+        # Store a reference to the external list
+        self.lr_history = lr_history if lr_history is not None else []
+
+    def step(self, closure=None):
+        self.current_step += 1
+        
+        if self.decay_type == 'linear':
+            decay_factor = max(0.0, 1.0 - (self.current_step / self.total_steps))
+            new_lr = self.initial_lr * decay_factor
+            
+        elif self.decay_type == 'cosine':
+            decay_factor = 0.5 * (1 + math.cos(math.pi * self.current_step / self.total_steps))
+            new_lr = self.initial_lr * decay_factor
+            
+        elif self.decay_type == 'step' and self.step_size is not None:
+            num_decays = self.current_step // self.step_size
+            new_lr = self.initial_lr * (self.gamma ** num_decays)
+            
+        else:
+            new_lr = self.initial_lr 
+            
+        for param_group in self.param_groups:
+            param_group['lr'] = max(new_lr, 1e-7)
+            
+        # Log the learning rate
+        self.lr_history.append(new_lr)
+            
+        super().step(closure)
 
 # --- Metric name wrapper class ---
 class ChannelAwareMSSWD(MSSWD):
@@ -72,11 +115,18 @@ def main():
     nl = (3, 5, 5)
     
     use_one_hot = not config['disable_one_hot']
-    nc = 3 if use_one_hot else 1
-    encoding_tag = "one_hot" if use_one_hot else "no_one_hot"
+    one_hot_all = config.get('one_hot_all', False)
+    
+    if use_one_hot:
+        nc = 9 if one_hot_all else 3
+        encoding_tag = "one_hot_all" if one_hot_all else "one_hot"
+    else:
+        nc = 1
+        encoding_tag = "no_one_hot"
     
     # Strictly matching working script: Always use Tanh for output bounds
     last_activation = nn.Tanh
+    num_iter_disc = config['num_iter']
 
     generator = partial(resnet.DeepGenerator3d,
                         nz=nz, ngf=64, nc=nc, nl=nl,
@@ -86,7 +136,7 @@ def main():
                         weight_normalization=nn.utils.parametrizations.spectral_norm,
                         activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
                         last_activation=last_activation,
-                        use_double_conv=True, use_double_resblocks=False,
+                        use_double_conv=True, use_double_resblocks=True,
                         use_attention=False, skip_z=False, split_z=False)
 
     discriminator = partial(resnet.DeepDiscriminator3d,
@@ -95,11 +145,32 @@ def main():
                             layer_normalization=None,
                             weight_normalization=nn.utils.parametrizations.spectral_norm,
                             activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
-                            use_double_conv=True, use_double_resblocks=False,
+                            use_double_conv=True, use_double_resblocks=True,
                             use_attention=False)
 
-    optimizer_generator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
-    optimizer_discriminator = partial(optim.Adam, lr=5e-5, betas=(0., 0.99))
+    # Calculate the total number of steps to define the decay schedule
+    iters_per_epoch = config['num_samples'] // config['batch_size']
+    total_generator_steps = config['epochs'] * iters_per_epoch
+    total_discriminator_steps = total_generator_steps * num_iter_disc
+
+    # 1. Create the lists in the main scope
+    gen_lr_history = []
+    disc_lr_history = []
+
+    # 2. Pass them to the optimizers via partial
+    optimizer_generator = partial(ScheduledAdam, 
+                                  lr=1e-3, 
+                                  betas=(0., 0.99), 
+                                  total_steps=total_generator_steps,
+                                  decay_type='cosine',
+                                  lr_history=gen_lr_history) # Injection here
+
+    optimizer_discriminator = partial(ScheduledAdam, 
+                                      lr=3e-3, 
+                                      betas=(0., 0.99), 
+                                      total_steps=total_discriminator_steps,
+                                      decay_type='cosine',
+                                      lr_history=disc_lr_history) # Injection here
     
     loss_generator = nn.BCEWithLogitsLoss()
     loss_discriminator = nn.BCEWithLogitsLoss()
@@ -150,6 +221,7 @@ def main():
                       num_samples = config['num_samples'],
                       save_mapping_dir=run_dir,
                       use_one_hot=use_one_hot,
+                      one_hot_all=one_hot_all,
                       dataset_name=dataset_name,
                       num_epochs=config['epochs'])
 
@@ -176,8 +248,8 @@ def main():
                       loss_generator,
                       loss_discriminator,
                       initialize_weights=initialize_weights_normal,
-                      num_iter_discriminator=1,
-                      num_accumulated=1, # Match fluvgan perfectly
+                      num_iter_discriminator=num_iter_disc,
+                      num_accumulated=1, 
                       fake_label_generator=1.,
                       real_label_discriminator=1.0,
                       fake_label_discriminator=0.0,
@@ -191,14 +263,33 @@ def main():
                   pin_memory=True,
                   drop_last=True,
                   checkpoint_step=1e12,
-                  sampling_step=100,
+                  sampling_step=1000,
                   sampling_size=3,
                   metrics=metrics,
-                  metric_step=100,
+                  metric_step=int(100/num_iter_disc),
                   validation_size=config['validation_size'],
                   validation_batch_size=config['val_batch_size'],
                   preload_validation=True,
                   resume_checkpoint_id=None)
+        
+        ################################################################################
+        # Save Learning Rate History
+        
+        lr_csv_path = os.path.join(run_dir, f"{output_label}_learning_rates.csv")
+        
+        # Because the discriminator might step multiple times per generator step, 
+        # the lists will be different lengths. We will save them side-by-side by 
+        # padding the shorter list with None (or empty strings).
+        import csv
+        from itertools import zip_longest
+        
+        with open(lr_csv_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Generator_LR', 'Discriminator_LR'])
+            for g_lr, d_lr in zip_longest(gen_lr_history, disc_lr_history, fillvalue=''):
+                writer.writerow([g_lr, d_lr])
+                
+        print(f"Saved learning rate tracking to: {lr_csv_path}")
 
         ################################################################################
         # Cleaning Checkpoints and Saving the Final `.pt` File

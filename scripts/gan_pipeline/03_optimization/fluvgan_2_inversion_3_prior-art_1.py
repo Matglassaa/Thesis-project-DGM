@@ -13,10 +13,10 @@ Architecture DCGAN (4)
 
 Example Run:
 nohup python fluvgan_2_inversion_3_prior-art_1.py \
-    --model_path ~/data/outputs/UPD_20000_samples_128xy_seed_43/RUN_10000_of_20000_samples_10_epochs_bs_64_val_size_010_no_disc_penalty/architecture_4_dcgan_training_datset_upper_plane_delta_20000_one_hot_epochs_100_bs_64_run_1.pt \
+    --model_path ~/data/outputs/UPD_20000_samples/100_epochs_3_classes_cgan_lr_gen_1e3_disc_3e3_doubleconv_doubleresblock_on_penalty_every_16_iter_setting_2/architecture_4_dcgan_samples_one_hot_epochs_100_bs_64_run_1.pt \
     --well_data_path ~/data/datasets/well_data/Well_data.xlsx \
-    --output_dir ~/data/outputs/post_optimization_results/RUN_10000_of_20000_samples_10_epochs_bs_64_val_size_010_no_disc_penalty \
-    --n_samples 100 --steps 1500 > inversion.out 2>&1 &
+    --output_dir ~/data/outputs/post_optimization_results/100_epochs_3_classes_cgan_lr_gen_1e3_disc_3e3_doubleconv_doubleresblock_on_penalty_every_16_iter_setting_2 \
+    --n_samples 100 --steps 3000 > inversion.out 2>&1 &
 """
 
 import os   
@@ -130,8 +130,8 @@ def main():
                                        weight_normalization=nn.utils.parametrizations.spectral_norm,
                                        activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
                                        last_activation=nn.Tanh,
-                                       use_double_conv=False,
-                                       use_double_resblocks=False,
+                                       use_double_conv=True,
+                                       use_double_resblocks=True,
                                        use_attention=False,
                                        skip_z=False,
                                        split_z=False)
@@ -145,8 +145,8 @@ def main():
                                                layer_normalization=None,
                                                weight_normalization=nn.utils.parametrizations.spectral_norm,
                                                activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
-                                               use_double_conv=False,
-                                               use_double_resblocks=False,
+                                               use_double_conv=True,
+                                               use_double_resblocks=True,
                                                use_attention=False)
 
     # Handle DataParallel if needed

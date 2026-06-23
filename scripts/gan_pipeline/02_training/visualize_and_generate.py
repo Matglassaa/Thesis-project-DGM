@@ -12,8 +12,8 @@ import torch.nn.functional as F
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Loss and Generate Realizations")
     parser.add_argument('--csv_path', type=str, default='outputs/2000_training_samples/RUN_2000_samples_128xy_dataset_50_epochs/fluvgan_1_training_1_architecture_4_dcgan_no_one_hot_1_history.csv', help='Path to the history CSV for plotting losses')
-    parser.add_argument('--ckpt_path', type=str, default='outputs/post_training/10000_training_samples/100_epochs_3_classes_wgas_nexus_100_isbx/architecture_4_wgan_gp_samples_one_hot_epochs_100_bs_64_run_1.pt', help='Path to the model checkpoint')
-    parser.add_argument('--output_dir', type=str, default='outputs/post_training/10000_training_samples/architecture_4_wgan_gp_samples_one_hot_epochs_100_bs_64_run_1/realizations', help='Output folder')
+    parser.add_argument('--ckpt_path', type=str, default='outputs/post_training/20000_training_samples/25_epochs_3_classes_cgan_dynamic_lr_doubleconv_doubleresblock_on_penalty_every_16_iter_setting_2/architecture_4_dcgan_samples_one_hot_epochs_25_bs_64_run_1.pt', help='Path to the model checkpoint')
+    parser.add_argument('--output_dir', type=str, default='outputs/post_training/20000_training_samples/25_epochs_3_classes_cgan_dynamic_lr_doubleconv_doubleresblock_on_penalty_every_16_iter_setting_2', help='Output folder')
     parser.add_argument('--num_reals', type=int, default=100, help='Number of realizations to generate')
 
     return parser.parse_args()
@@ -76,7 +76,7 @@ def generate_realizations(ckpt_path, output_dir, nc=3, nl = (3,5,5), num_realiza
 
     last_activation = nn.Tanh
     nz = 100
-    ngf = 32
+    ngf = 64
     max_factor = 16
 
     print("Building Generator...")
@@ -86,7 +86,7 @@ def generate_realizations(ckpt_path, output_dir, nc=3, nl = (3,5,5), num_realiza
         last_layer_normalization=nn.BatchNorm3d,
         weight_normalization=nn.utils.parametrizations.spectral_norm,
         activation=partial(nn.LeakyReLU, negative_slope=0.2, inplace=True),
-        last_activation=last_activation, use_double_conv=False, use_double_resblocks=False,
+        last_activation=last_activation, use_double_conv=True, use_double_resblocks=True,
         use_attention=False, skip_z=False, split_z=False
     )
 

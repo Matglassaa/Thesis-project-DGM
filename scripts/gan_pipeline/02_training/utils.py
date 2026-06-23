@@ -46,6 +46,7 @@ def parse_hybrid_args():
     parser.add_argument('--num_samples', type=int, default=argparse.SUPPRESS, help='Number of samples to generate for evaluation')
     parser.add_argument('--batch_size', type=int, default=argparse.SUPPRESS, help='Batch size for training')
     parser.add_argument('--val_batch_size', type=int, default=argparse.SUPPRESS, help='Batch size for validation')
+    parser.add_argument('--num_iter', type=int, default=1, help="number of iterations of the discriminator before the generator updates.")
     parser.add_argument('--num_gpus', type=int, default=argparse.SUPPRESS, help='Number of GPUs to use')
     parser.add_argument('--disable_one_hot', type=bool, default=argparse.SUPPRESS, help='Disable one-hot encoding')
     parser.add_argument('--one_hot_all', type=bool, default=argparse.SUPPRESS, help= 'whether all facies in the training dataset should be considered as one hot')
@@ -63,6 +64,7 @@ def parse_hybrid_args():
         "num_samples":None,
         "batch_size": 8,
         "val_batch_size": 8,
+        "num_iter":1,
         "num_gpus": 1,
         "disable_one_hot": False,
         "validation_size": 0.1

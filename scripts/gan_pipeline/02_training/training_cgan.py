@@ -149,7 +149,7 @@ def main():
                             use_attention=False)
 
     optimizer_generator = partial(optim.Adam, lr=1e-3, betas=(0., 0.99))
-    optimizer_discriminator = partial(optim.Adam, lr=3e-3, betas=(0., 0.99))
+    optimizer_discriminator = partial(optim.Adam, lr=1e-2, betas=(0., 0.99))
     
     loss_generator = nn.BCEWithLogitsLoss()
     loss_discriminator = nn.BCEWithLogitsLoss()

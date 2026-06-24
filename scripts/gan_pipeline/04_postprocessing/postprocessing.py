@@ -1,13 +1,13 @@
 import os
 import sys
 import glob
-import json
+import math
 import random
 import pathlib
 import warnings
 from pathlib import Path
 
-# Matheatical libraries
+# Mathematical libraries
 import numpy as np
 import pandas as pd
 from scipy.stats import entropy
@@ -22,12 +22,13 @@ import matplotlib.patches as mpatches
 
 # ML libraries
 import torch
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_curve, auc
+from sklearn.preprocessing import label_binarize
 from sklearn.manifold import MDS
 from voxgan.models.metrics import MSSWD
 
 
-# Miscelaneous
+# Miscellaneous
 from tqdm import tqdm
 from collections import Counter
 from skimage.util import view_as_windows
@@ -67,12 +68,27 @@ class WellMismatch:
     imbalance, giving equal weight to minority facies (e.g., channels).
 
     Attributes:
+        flumy_name (str): Display name for the Flumy baseline dataset in plots.
+        gan_name (str): Display name for the generated dataset in plots.
+        cfg (dict): Centralized facies configuration from get_facies_config().
         data_files (list): Sorted list of file paths to the GAN realizations.
         well_data_path (str): Path to the well data file (e.g., CSV or Excel).
         well_coords (list): List of (Z, Y, X) tuples representing well locations.
         well_true_facies (list): List of true physical facies codes at the well coords.
     """
-    def __init__(self, data_dir, well_data_path):
+    def __init__(self, flumy_name, gan_name, data_dir, well_data_path):
+        """Initializes the WellMismatch evaluator.
+
+        Args:
+            flumy_name (str): Display name for the Flumy baseline dataset (e.g., 'Flumy').
+            gan_name (str): Display name for the generated dataset (e.g., 'VoxGAN').
+            data_dir (str): Glob pattern matching GAN realization files.
+            well_data_path (str): Path to the well data Excel file.
+        """
+        self.flumy_name = flumy_name
+        self.gan_name = gan_name
+        self.cfg = get_facies_config()
+        
         self.data_files = sorted(glob.glob(str(data_dir)))
         if not self.data_files:
             print(f"Warning: No files found matching {data_dir}")
@@ -95,20 +111,16 @@ class WellMismatch:
             
             for tab in tabs:
                 df = pd.read_excel(self.well_data_path, sheet_name=tab)
-                df_32 = df.head(32) # Take first 32 meters (matches Z grid size)
+                df_32 = df.head(32) # Takes first 32 meters (matches Z grid size)
                 
-                # Facies column might have a trailing space in some versions
                 facies_col = 'Facies ' if 'Facies ' in df.columns else 'Facies'
                 
                 for i, row in df_32.iterrows():
-                    z = i # meter by meter
+                    z = i
                     y = int(np.round((row['GRID N'] - ORIGIN_N) / SPACING))
                     x = int(np.round((row['GRID E'] - ORIGIN_E) / SPACING))
                     
-                    # Ensure within grid bounds (128x128)
                     if 0 <= x < 128 and 0 <= y < 128:
-                        
-                        # Extract raw facies and map it to 1, 4, or 8 to match the GAN output
                         raw_facies = row[facies_col]
                         
                         if 1 <= raw_facies <= 3: 
@@ -118,7 +130,7 @@ class WellMismatch:
                         elif 8 <= raw_facies <= 12: 
                             mapped_facies = 8
                         else:
-                            mapped_facies = 1 # Fallback
+                            mapped_facies = 1
                             
                         self.well_coords.append((z, y, x))
                         self.well_true_facies.append(mapped_facies)
@@ -136,7 +148,6 @@ class WellMismatch:
         else:
             raw_arr = np.load(file_path)
             
-        # Convert raw network output to standard 3D indices
         if raw_arr.ndim == 4:
             class_indices = np.argmax(raw_arr, axis=0) 
         elif raw_arr.ndim == 3:
@@ -144,9 +155,8 @@ class WellMismatch:
         else:
             raise ValueError(f"Unexpected array shape {raw_arr.shape} in {file_path}")
 
-        # Map to physical facies: 1, 4, 8
-        mapping = np.array([1, 4, 8])
-        class_indices = np.clip(class_indices, 0, 2)
+        mapping = np.array(self.cfg['codes'])
+        class_indices = np.clip(class_indices, 0, len(mapping) - 1)
         return mapping[class_indices]
 
     def compute_mismatch(self):
@@ -168,14 +178,11 @@ class WellMismatch:
                 y_pred = []
                 y_true_valid = []
                 
-                # Extract predicted values at exactly the well coordinates
                 for (z, y, x), true_facies in zip(self.well_coords, self.well_true_facies):
-                    # Safety check to ensure well coords fall inside the 3D grid boundaries
                     if 0 <= z < grid.shape[0] and 0 <= y < grid.shape[1] and 0 <= x < grid.shape[2]:
                         y_pred.append(grid[z, y, x])
                         y_true_valid.append(true_facies)
                     
-                # Calculate the Macro F1 Score
                 macro_f1 = f1_score(y_true_valid, y_pred, average='macro')
                 
                 results.append({
@@ -196,91 +203,85 @@ class WellMismatch:
         
         return df_results
 
-    def plot_vpc(self, num_realizations=10, save_plot=False, output_dir='outputs'):
-        """Calculates and plots the Vertical Proportion Curve (VPC) comparing Well vs GAN data."""
+    def plot_vpc(self, num_realizations=10, figsize=None, save_plot=False, output_dir='outputs'):
+        """Calculates and plots the Vertical Proportion Curve (VPC) comparing Well vs GAN data.
+
+        Args:
+            num_realizations (int, optional): Number of GAN realizations to average. Defaults to 10.
+            figsize (tuple, optional): Figure size as (width, height) in inches. Defaults to (12, 8).
+            save_plot (bool, optional): If True, saves the plot to output_dir. Defaults to False.
+            output_dir (str, optional): Directory to save the plot. Defaults to 'outputs'.
+        """
         print(f"\n--- Generating Vertical Proportion Curves (VPC) ---")
         if not self.well_coords:
             print("No well data loaded. Cannot compute VPC.")
             return
 
-        # 1. Set up depth parameters
-        # Based on your well loading logic, we evaluate 32 meters
-        max_z = 32
-        facies_codes = [1, 4, 8]
-        facies_colors = {1: '#f1970f', 4: '#fffc65', 8: '#33ff00'}
-        facies_labels = {1: 'Sand body deposits', 4: 'Crevasse splay & Levee deposits', 8: 'Clay deposits'}
+        figsize = figsize or (12, 8)
+        facies_codes = self.cfg['codes']
+        facies_colors = self.cfg['colors']
+        facies_labels = self.cfg['names']
 
-        # 2. Calculate Well VPC
+        max_z = 32
+
         well_vpc = {f: np.zeros(max_z) for f in facies_codes}
         well_counts_per_z = np.zeros(max_z)
 
-        # Tally the facies at each depth index from the exact well locations
         for (z, y, x), f_val in zip(self.well_coords, self.well_true_facies):
             if z < max_z:
                 well_vpc[f_val][z] += 1
                 well_counts_per_z[z] += 1
 
-        # Normalize counts into proportions (0.0 to 1.0)
         for f in facies_codes:
-            # Avoid division by zero where we have no well data
             safe_counts = np.where(well_counts_per_z == 0, 1, well_counts_per_z)
             well_vpc[f] = well_vpc[f] / safe_counts
-            # Set to NaN so matplotlib doesn't plot zeros where data is missing
             well_vpc[f][well_counts_per_z == 0] = np.nan 
 
-        # 3. Calculate GAN VPC
         gan_vpc = {f: np.zeros(max_z) for f in facies_codes}
         files_to_process = self.data_files[:num_realizations]
         
-        print(f"Processing {len(files_to_process)} GAN realizations for global VPC...")
+        print(f"Processing {len(files_to_process)} {self.gan_name} realizations for global VPC...")
         for file_path in files_to_process:
             grid = self._load_and_map_realization(file_path)
             z_dim, y_dim, x_dim = grid.shape
             cells_per_slice = y_dim * x_dim
             
             for f in facies_codes:
-                # Count occurrences of facies 'f' in every Z-slice, divide by total area
                 proportions = np.sum(grid == f, axis=(1, 2)) / cells_per_slice
                 gan_vpc[f] += proportions[:max_z]
                 
-        # Average the GAN proportions across all processed realizations
         for f in facies_codes:
             gan_vpc[f] /= len(files_to_process)
 
-        # 4. Render the Plot
-        fig, axes = plt.subplots(1, 2, figsize=(12, 8), sharey=True)
+        fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
         z_array = np.arange(max_z)
 
-        # Plot Well Data
         for f in facies_codes:
             axes[0].plot(well_vpc[f], z_array, color=facies_colors[f], 
                          label=facies_labels[f], linewidth=2.5, marker='o', markersize=4)
         
-        axes[0].set_title('Well Data VPC (Local)', fontsize=14)
+        axes[0].set_title(f'{self.flumy_name} VPC (Local)', fontsize=14)
         axes[0].set_ylabel('Depth (Z-index)', fontsize=12)
         axes[0].set_xlabel('Proportion', fontsize=12)
-        axes[0].invert_yaxis() # Depth typically goes down
+        axes[0].invert_yaxis()
         axes[0].set_xlim(0, 1)
         axes[0].grid(True, linestyle='--', alpha=0.7)
 
-        # Plot GAN Data
         for f in facies_codes:
             axes[1].plot(gan_vpc[f], z_array, color=facies_colors[f], 
                          linewidth=2.5)
-            # Add a subtle fill for better readability
             axes[1].fill_betweenx(z_array, 0, gan_vpc[f], color=facies_colors[f], alpha=0.1)
 
-        axes[1].set_title(f'GAN Data VPC (Global Mean of {len(files_to_process)} samples)', fontsize=14)
+        axes[1].set_title(f'{self.gan_name} VPC (Global Mean of {len(files_to_process)} samples)', fontsize=14)
         axes[1].set_xlabel('Proportion', fontsize=12)
         axes[1].set_xlim(0, 1)
         axes[1].grid(True, linestyle='--', alpha=0.7)
 
-        # Shared Legend
         handles = [plt.Line2D([0], [0], color=facies_colors[f], lw=4) for f in facies_codes]
         fig.legend(handles, [facies_labels[f] for f in facies_codes], 
                    loc='lower center', ncol=3, bbox_to_anchor=(0.5, -0.05), fontsize=12)
 
-        plt.suptitle("Vertical Proportion Curve: Well Conditioning vs. GAN Generation", fontsize=16)
+        plt.suptitle(f"Vertical Proportion Curve: {self.flumy_name} vs. {self.gan_name}", fontsize=16)
         plt.tight_layout()
 
         if save_plot:
@@ -291,34 +292,103 @@ class WellMismatch:
 
         plt.show()
 
+    def plot_roc_curve(self, save_plot=False, output_dir='outputs'):
+        """Calculates and plots a Multi-Class Ensemble ROC Curve against well data."""
+        print(f"\n--- Generating Ensemble ROC Curve ---")
+        if not self.well_coords:
+            print("No well data loaded. Cannot compute ROC.")
+            return
+
+        facies_codes = self.cfg['codes']
+        y_true_bin = label_binarize(self.well_true_facies, classes=facies_codes)
+        n_classes = len(facies_codes)
+
+        num_samples = len(self.data_files)
+        well_probs = np.zeros((len(self.well_coords), n_classes))
+
+        print(f"Calculating voxel probabilities across {num_samples} realizations...")
+        for file_path in self.data_files:
+            grid = self._load_and_map_realization(file_path)
+            
+            for i, (z, y, x) in enumerate(self.well_coords):
+                if 0 <= z < grid.shape[0] and 0 <= y < grid.shape[1] and 0 <= x < grid.shape[2]:
+                    pred_facies = grid[z, y, x]
+                    
+                    if pred_facies in facies_codes:
+                        class_idx = facies_codes.index(pred_facies)
+                        well_probs[i, class_idx] += 1
+        
+        well_probs /= num_samples
+
+        fpr = dict()
+        tpr = dict()
+        roc_auc = dict()
+
+        facies_names = self.cfg['names']
+        facies_colors = self.cfg['colors']
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+
+        for i, code in enumerate(facies_codes):
+            fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], well_probs[:, i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+            
+            ax.plot(fpr[i], tpr[i], color=facies_colors[code], lw=2.5,
+                    label=f"{facies_names[code]} (AUC = {roc_auc[i]:.3f})")
+
+        ax.plot([0, 1], [0, 1], 'k--', lw=2, alpha=0.5, label='Random Guessing (AUC = 0.5)')
+        ax.set_xlim([-0.02, 1.0])
+        ax.set_ylim([0.0, 1.05])
+        
+        ax.set_xlabel('False Positive Rate', fontsize=12)
+        ax.set_ylabel('True Positive Rate', fontsize=12)
+        ax.set_title(f'Ensemble ROC Curve: {self.gan_name} vs. Well Data\n({num_samples} Realizations Evaluated)', fontsize=14, pad=15)
+        
+        ax.legend(loc="lower right", fontsize=11, framealpha=0.9)
+        ax.grid(alpha=0.4, linestyle='--')
+        ax.set_aspect('equal')
+
+        plt.tight_layout()
+
+        if save_plot:
+            os.makedirs(output_dir, exist_ok=True)
+            plot_path = os.path.join(output_dir, f"roc_curve_{num_samples}_samples.png")
+            plt.savefig(plot_path, bbox_inches='tight', dpi=300)
+            print(f"Saved ROC plot to: {plot_path}")
+
+        plt.show()
+
 
 class PostProcessing:
     """Handles spatial and statistical validation metrics for GAN-generated geological facies.
 
-    This class loads 3D arrays of geological facies (both Flumy data and GAN-generated),
+    This class loads 3D arrays of geological facies (both Flumy samples and GAN-generated),
     computes spatial statistics (MPS, connectivity, normalized entropy, JSD), 
     and generates visual diagnostic plots including 3D renders.
 
     Attributes:
+        flumy_name (str): Display name for the Flumy baseline dataset in plots.
+        gan_name (str): Display name for the generated dataset in plots.
         output_dir (str): Directory where generated plots and CSVs will be saved.
         data_files (list): Sorted list of file paths for the Flumy dataset.
         gan_files (list): Sorted list of file paths for the GAN-generated dataset.
-        data_samples (list): Loaded Flumy data arrays in memory.
+        flumy_samples (list): Loaded Flumy data arrays in memory.
         gan_data (list): Loaded GAN data arrays in memory.
+        cfg (dict): Centralized facies configuration from get_facies_config().
         facies_mapping (dict): Mapping from categorical indices to specific geological codes.
     """
     
-    def __init__(self, data_name, gan_name, output_dir, data_path, gan_path):
+    def __init__(self, flumy_name, gan_name, output_dir, data_path, gan_path):
         """Initializes the class and locates files, but defers loading to save memory.
 
         Args:
-            data_name (str): Display name for the baseline dataset in plots (e.g., 'Flumy Data').
+            flumy_name (str): Display name for the Flumy baseline dataset in plots (e.g., 'Flumy Data').
             gan_name (str): Display name for the generated dataset in plots.
             output_dir (str): Directory to save outputs (e.g., 'outputs/metrics').
-            data_path (str): Glob pattern matching data files (e.g., 'datasets/*.npy').
+            data_path (str): Glob pattern matching Flumy data files (e.g., 'datasets/*.npy').
             gan_path (str): Glob pattern matching GAN data files (e.g., 'outputs/*.npy').
         """ 
-        self.data_name = data_name
+        self.flumy_name = flumy_name
         self.gan_name = gan_name
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
@@ -329,25 +399,24 @@ class PostProcessing:
         self.data_files = sorted(glob.glob(str(data_path)))
         self.gan_files = sorted(glob.glob(str(gan_path)))
         
-        self.data_samples = []
+        self.flumy_samples = []
         self.gan_data = []
         
-        # Load the centralized configuration
         self.cfg = get_facies_config()
         self.facies_mapping = self.cfg['mapping']
 
     
-    def load_data_samples(self, limit=100):
-        """Loads real data into memory.
+    def load_flumy_samples(self, limit=100):
+        """Loads Flumy data into memory.
         
         Args:
             limit (int, optional): Maximum files to load to prevent out-of-memory errors.
                 Defaults to 100. Pass None to load all matching files.
         """
-        print(f"Loading Real samples (limit: {limit if limit else 'ALL'})...")
+        print(f"Loading {self.flumy_name} samples (limit: {limit if limit else 'ALL'})...")
         files_to_load = self.data_files[:limit] if limit else self.data_files
-        self.data_samples = [self._load_data(f) for f in files_to_load]
-        print(f"Loaded {len(self.data_samples)} real samples into memory.")
+        self.flumy_samples = [self._load_data(f) for f in files_to_load]
+        print(f"Loaded {len(self.flumy_samples)} {self.flumy_name} samples into memory.")
 
     def load_gan_samples(self, limit=100):
         """Loads GAN data into memory.
@@ -356,13 +425,13 @@ class PostProcessing:
             limit (int, optional): Maximum files to load to prevent out-of-memory errors.
                 Defaults to 100. Pass None to load all matching files.
         """
-        print(f"Loading GAN samples (limit: {limit if limit else 'ALL'})...")
+        print(f"Loading {self.gan_name} samples (limit: {limit if limit else 'ALL'})...")
         files_to_load = self.gan_files[:limit] if limit else self.gan_files
         self.gan_data = [self._load_gan(f) for f in files_to_load]
-        print(f"Loaded {len(self.gan_data)} GAN samples into memory.")
+        print(f"Loaded {len(self.gan_data)} {self.gan_name} samples into memory.")
 
     def _load_data(self, file):
-        """Loads a facies array and maps real labels to geological codes.
+        """Loads a Flumy facies array and maps labels to geological codes.
 
         Args:
             file (str): File path to a saved .npy numpy array.
@@ -418,22 +487,24 @@ class PostProcessing:
             numpy.ndarray: Mapped array containing physical facies codes.
         """
         if class_indices.max() < 3:
-            mapping = np.array([1, 4, 8]) 
+            mapping = np.array(self.cfg['codes'])
         else:
             mapping = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) 
         return mapping[class_indices]
 
-    def _get_global_proportions(self, data_list, target_facies=[1, 4, 8]):
+    def _get_global_proportions(self, data_list, target_facies=None):
         """Calculates the global probability of each facies across the entire dataset.
 
         Args:
             data_list (list): List of 3D numpy arrays containing geological facies.
             target_facies (list, optional): List of facies codes to calculate proportions for.
-                Defaults to [1, 4, 8].
+                Defaults to None, which uses self.cfg['codes'].
 
         Returns:
             list: Float probabilities of each target facies, summing to 1.0.
         """
+        if target_facies is None:
+            target_facies = self.cfg['codes']
         if not data_list: return [0.0] * len(target_facies)
         counts = {f: 0 for f in target_facies}
         total_voxels = sum(arr.size for arr in data_list)
@@ -454,28 +525,20 @@ class PostProcessing:
             float: Theoretical maximum entropy in bits.
         """
         probs = np.array(proportions)
-        probs = probs[probs > 0] # Filter out strict zeros to avoid log2(0) errors
+        probs = probs[probs > 0]
         return -np.sum(probs * np.log2(probs))
 
     def _create_colormap_and_legend(self):
-        """Creates a ListedColormap and legend patches based on facies configuration.
+        """Creates a ListedColormap and legend patches from the centralized facies config.
 
         Returns:
-            tuple: Contains the custom ListedColormap and a list of matplotlib patches.
-                   Returns (None, None) if the config file is not found.
+            tuple: (ListedColormap, list of matplotlib Patch objects for legends).
         """
-        try:
-            with open('scripts/gan_pipeline/core/facies_config.json','r') as f:
-                facies_properties = json.load(f)
-        except Exception:
-            return None, None
-        
-        sorted_facies = sorted(facies_properties.items(), key=lambda item: item[1]['val'])
-        color_list = [item[1]['color'] for item in sorted_facies]
+        color_list = [self.cfg['colors'][c] for c in self.cfg['codes']]
         custom_cmap = ListedColormap(color_list)
         legend_patches = [
-            mpatches.Patch(color=info['color'], label=name.replace('_', ' ').title()) 
-            for name, info in sorted_facies
+            mpatches.Patch(color=self.cfg['colors'][c], label=self.cfg['names'][c]) 
+            for c in self.cfg['codes']
         ]
         return custom_cmap, legend_patches
 
@@ -495,143 +558,179 @@ class PostProcessing:
         unique_ids, blob_sizes = np.unique(labeled_array, return_counts=True)
         return blob_sizes[1:] 
 
-    def connectivity_and_pattern_analysis(self, facies_list=None, sample_limit=10):
+    def connectivity_and_pattern_analysis(self, facies_list=None, sample_limit=10, recompute_flumy=False):
         """Executes MPS and Connectivity comparisons for ALL facies using loaded data.
+        
+        Flumy baseline data is computed once and saved to a CSV. On subsequent runs, 
+        it loads the baseline from the CSV to save time, only recomputing the GAN data.
 
         Args:
-            facies_list (list, optional): Specific facies to analyze. If None, it will 
-                automatically detect all unique facies in the real dataset.
+            facies_list (list, optional): Specific facies to analyze. Defaults to config codes.
             sample_limit (int, optional): Maximum number of samples to process. 
                 Defaults to 10. Pass None to process all.
+            recompute_flumy (bool, optional): If True, forces a recalculation of the 
+                Flumy baseline dataset even if a saved CSV exists. Defaults to False.
                 
         Returns:
-            tuple: (DataFrame of connectivity stats, Real Pattern Counter, GAN Pattern Counter)
+            tuple: (DataFrame of connectivity stats, Flumy Pattern Counter, GAN Pattern Counter)
         """
-        load_limit = sample_limit if sample_limit is not None else 10
-        if getattr(self, 'data_samples', None) is None or getattr(self, 'gan_data', None) is None:
-            print(f"Warning: Data not loaded. Auto-loading up to {load_limit} samples...")
-            self.load_data_samples(limit=load_limit)
-            self.load_gan_samples(limit=load_limit)
-
-        real_to_process = self.data_samples[:sample_limit] if sample_limit else self.data_samples
-        gan_to_process = self.gan_data[:sample_limit] if sample_limit else self.gan_data
-
-        # Automatically detect unique facies if not provided
         if facies_list is None:
-            facies_list = np.unique(real_to_process[0]).tolist()
-            print(f"Auto-detected facies: {facies_list}")
+            facies_list = self.cfg['codes']
 
-        real_pattern_counter, gan_pattern_counter = Counter(), Counter()
+        limit_str = str(sample_limit) if sample_limit is not None else "ALL"
         
-        # Use defaultdict to dynamically store lists of blob sizes for every facies
-        all_real_blobs = defaultdict(list)
+        baseline_csv_path = os.path.join(self.output_dir, f"baseline_connectivity_{limit_str}_samples.csv")
+        gan_csv_path = os.path.join(self.output_dir, f"connectivity_comparison_{limit_str}_samples.csv")
+
+        flumy_stats_dict = {}
+        flumy_pattern_counter = Counter()
+        total_flumy_patterns = "Loaded from CSV (Not Recomputed)"
+
+        if not recompute_flumy and os.path.exists(baseline_csv_path):
+            print(f"\n--- Loading pre-computed {self.flumy_name} metrics from: {os.path.basename(baseline_csv_path)} ---")
+            df_baseline = pd.read_csv(baseline_csv_path)
+            
+            for _, row in df_baseline.iterrows():
+                flumy_stats_dict[row['Facies']] = {
+                    'Flumy_Max_Blob': row['Flumy_Max_Blob'],
+                    'Flumy_Median': row['Flumy_Median'],
+                    'Flumy_Mean': row['Flumy_Mean']
+                }
+        else:
+            print(f"\n--- Computing {self.flumy_name} metrics for {limit_str} samples ---")
+            if getattr(self, 'flumy_samples', None) is None or len(self.flumy_samples) == 0:
+                self.load_flumy_samples(limit=sample_limit)
+            
+            flumy_to_process = self.flumy_samples[:sample_limit] if sample_limit else self.flumy_samples
+            all_flumy_blobs = defaultdict(list)
+            
+            for data in flumy_to_process:
+                patterns, counts = self.get_pattern_counts(data)
+                for p, c in zip(patterns, counts):
+                    flumy_pattern_counter[tuple(p)] += c 
+                    
+                for f_val in facies_list:
+                    all_flumy_blobs[f_val].extend(self.analyze_connectivity(data, f_val))
+                    
+            total_flumy_patterns = len(flumy_pattern_counter)
+            
+            baseline_rows = []
+            for f_val in facies_list:
+                d_blobs = all_flumy_blobs[f_val]
+                stats = {
+                    'Flumy_Max_Blob': max(d_blobs) if d_blobs else 0,
+                    'Flumy_Median': np.median(d_blobs) if d_blobs else 0,
+                    'Flumy_Mean': np.mean(d_blobs) if d_blobs else 0
+                }
+                flumy_stats_dict[f_val] = stats
+                
+                row = {'Facies': f_val}
+                row.update(stats)
+                baseline_rows.append(row)
+                
+            pd.DataFrame(baseline_rows).to_csv(baseline_csv_path, index=False)
+            print(f"Saved {self.flumy_name} baseline metrics to: {baseline_csv_path}")
+
+        print(f"\n--- Computing {self.gan_name} metrics for {limit_str} samples ---")
+        if getattr(self, 'gan_data', None) is None or len(self.gan_data) == 0:
+            self.load_gan_samples(limit=sample_limit)
+            
+        gan_to_process = self.gan_data[:sample_limit] if sample_limit else self.gan_data
+        gan_pattern_counter = Counter()
         all_gan_blobs = defaultdict(list)
 
-        # --- Process Real Data ---
-        print(f"Processing {len(real_to_process)} Real samples...")
-        for data in real_to_process:
-            patterns, counts = self.get_pattern_counts(data)
-            for p, c in zip(patterns, counts):
-                real_pattern_counter[tuple(p)] += c 
-                
-            # Check connectivity for EVERY facies
-            for f_val in facies_list:
-                all_real_blobs[f_val].extend(self.analyze_connectivity(data, f_val))
-
-        # --- Process GAN Data ---
-        print(f"Processing {len(gan_to_process)} GAN samples...")
         for data in gan_to_process:
             patterns, counts = self.get_pattern_counts(data)
             for p, c in zip(patterns, counts):
                 gan_pattern_counter[tuple(p)] += c
                 
-            # Check connectivity for EVERY facies
             for f_val in facies_list:
                 all_gan_blobs[f_val].extend(self.analyze_connectivity(data, f_val))
-        
-        # --- Output Pattern Results ---
-        print("\n" + "="*40)
-        print(" MULTIPLE POINT STATISTICS (MPS)")
-        print("="*40)
-        print(f"Total unique patterns (Real): {len(real_pattern_counter)}")
-        print(f"Total unique patterns (GAN):  {len(gan_pattern_counter)}")
-        
-        # --- Compile Connectivity Results into a DataFrame ---
+
         stats_data = []
         for f_val in facies_list:
-            r_blobs = all_real_blobs[f_val]
             g_blobs = all_gan_blobs[f_val]
+            
+            d_stats = flumy_stats_dict.get(f_val, {'Flumy_Max_Blob': 0, 'Flumy_Median': 0, 'Flumy_Mean': 0})
             
             stats_data.append({
                 'Facies': f_val,
-                'Real_Max_Blob': max(r_blobs) if r_blobs else 0,
+                'Flumy_Max_Blob': d_stats['Flumy_Max_Blob'],
                 'GAN_Max_Blob': max(g_blobs) if g_blobs else 0,
-                'Real_Median': np.median(r_blobs) if r_blobs else 0,
+                'Flumy_Median': d_stats['Flumy_Median'],
                 'GAN_Median': np.median(g_blobs) if g_blobs else 0,
-                'Real_Mean': np.mean(r_blobs) if r_blobs else 0,
+                'Flumy_Mean': d_stats['Flumy_Mean'],
                 'GAN_Mean': np.mean(g_blobs) if g_blobs else 0
             })
             
         df_stats = pd.DataFrame(stats_data)
-        
-        # Format the float columns for cleaner console output
-        df_stats['Real_Mean'] = df_stats['Real_Mean'].round(2)
+        df_stats['Flumy_Mean'] = df_stats['Flumy_Mean'].round(2)
         df_stats['GAN_Mean'] = df_stats['GAN_Mean'].round(2)
         
-        print("\n" + "="*40)
+        df_stats.to_csv(gan_csv_path, index=False)
+
+        print("\n" + "="*50)
+        print(" MULTIPLE POINT STATISTICS (MPS)")
+        print("="*50)
+        print(f"Total unique patterns ({self.flumy_name}): {total_flumy_patterns}")
+        print(f"Total unique patterns ({self.gan_name}): {len(gan_pattern_counter)}")
+        
+        print("\n" + "="*50)
         print(" MACRO-CONNECTIVITY STATISTICS")
-        print("="*40)
+        print("="*50)
         print(df_stats.to_string(index=False))
-        print("\n")
+        print(f"\nSaved full comparison metrics to: {gan_csv_path}\n")
 
-        return df_stats, real_pattern_counter, gan_pattern_counter
+        return df_stats, flumy_pattern_counter, gan_pattern_counter
 
-    def plot_facies_percentages(self, mode='gan', show_plot=True, save_plot=False):
+    def plot_facies_percentages(self, mode='gan', figsize=None, show_plot=True, save_plot=False):
         """Plots volume percentages of specific facies globally across the dataset.
 
         Args:
-            mode (str, optional): Target to evaluate ('gan', 'real', or 'both'). Defaults to 'gan'.
+            mode (str, optional): Target to evaluate ('gan', 'flumy', or 'both'). Defaults to 'gan'.
+            figsize (tuple, optional): Figure size as (width, height) in inches. Defaults to (10, 6).
             show_plot (bool, optional): If True, displays the plot interactively. Defaults to True.
             save_plot (bool, optional): If True, saves the plot to the output directory. Defaults to False.
 
         Raises:
             ValueError: If an invalid mode is provided.
         """
-        valid_modes = ['gan', 'real', 'both']
+        valid_modes = ['gan', 'flumy', 'both']
         if mode not in valid_modes:
             raise ValueError(f"Invalid mode '{mode}'. Choose from {valid_modes}.")
 
         if mode in ['gan', 'both'] and not self.gan_data:
             self.load_gan_samples()
-        if mode in ['real', 'both'] and not self.data_samples:
-            self.load_data_samples()
+        if mode in ['flumy', 'both'] and not self.flumy_samples:
+            self.load_flumy_samples()
             
         print(f"\n--- Generating Facies Distribution (Mode: {mode.upper()}) ---")
 
-        target_facies = [1, 4, 8]
-        labels = ["Sand body deposits", "Crevasse Splay/Levee", "Floodplain"]
-        colors = ['#f1970f', '#fffc65', '#33ff00']
+        figsize = figsize or (10, 6)
+        target_facies = self.cfg['codes']
+        labels = [self.cfg['names'][c] for c in self.cfg['codes']]
+        colors = [self.cfg['colors'][c] for c in self.cfg['codes']]
         
         def calculate_percentages(data_list):
             probs = self._get_global_proportions(data_list, target_facies)
             return [p * 100 for p in probs]
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=figsize)
 
         if mode == 'both':
-            real_percentages = calculate_percentages(self.data_samples)
+            flumy_percentages = calculate_percentages(self.flumy_samples)
             gan_percentages = calculate_percentages(self.gan_data)
             
             x = np.arange(len(labels))
             width = 0.35 
             
-            bars_real = ax.bar(x - width/2, real_percentages, width, color=colors, edgecolor='black', alpha=0.5)
+            bars_flumy = ax.bar(x - width/2, flumy_percentages, width, color=colors, edgecolor='black', alpha=0.5)
             bars_gan = ax.bar(x + width/2, gan_percentages, width, color=colors, edgecolor='black', hatch='//')
             
             ax.set_xticks(x)
             ax.set_xticklabels(labels, fontsize=11)
             
-            for bar in bars_real:
+            for bar in bars_flumy:
                 yval = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f'{yval:.1f}%', ha='center', va='bottom', fontsize=10, color='#555555')
             for bar in bars_gan:
@@ -639,14 +738,14 @@ class PostProcessing:
                 ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f'{yval:.1f}%', ha='center', va='bottom', fontsize=10, fontweight='bold')
                 
             legend_elements = [
-                mpatches.Patch(facecolor='gray', alpha=0.5, edgecolor='black', label=f'Real Data ({len(self.data_samples)} samples)'),
-                mpatches.Patch(facecolor='gray', hatch='//', edgecolor='black', label=f'GAN Data ({len(self.gan_data)} samples)')
+                mpatches.Patch(facecolor='gray', alpha=0.5, edgecolor='black', label=f'{self.flumy_name} ({len(self.flumy_samples)} samples)'),
+                mpatches.Patch(facecolor='gray', hatch='//', edgecolor='black', label=f'{self.gan_name} ({len(self.gan_data)} samples)')
             ]
             ax.legend(handles=legend_elements, loc='upper right', fontsize=11)
-            ax.set_title('Facies Volume Distribution: Real vs. GAN', fontsize=14, pad=15)
+            ax.set_title(f'Facies Volume Distribution: {self.flumy_name} vs. {self.gan_name}', fontsize=14, pad=15)
             
         else:
-            target_data = self.gan_data if mode == 'gan' else self.data_samples
+            target_data = self.gan_data if mode == 'gan' else self.flumy_samples
             percentages = calculate_percentages(target_data)
             
             bars = ax.bar(labels, percentages, color=colors, edgecolor='black', linewidth=1.2)
@@ -655,8 +754,8 @@ class PostProcessing:
                 yval = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2, yval + 1, f'{yval:.2f}%', ha='center', va='bottom', fontweight='bold', fontsize=11)
                 
-            title_prefix = "GAN" if mode == 'gan' else "Real"
-            ax.set_title(f'{title_prefix} Facies Volume Distribution ({len(target_data)} Samples)', fontsize=14, pad=15)
+            display_name = self.gan_name if mode == 'gan' else self.flumy_name
+            ax.set_title(f'{display_name} Facies Volume Distribution ({len(target_data)} Samples)', fontsize=14, pad=15)
 
         ax.set_ylabel('Volume Percentage (%)', fontsize=12)
         ax.set_ylim(0, 100) 
@@ -672,26 +771,25 @@ class PostProcessing:
         if show_plot: plt.show()
         else: plt.close(fig)
 
-    def plot_entropy(self, data_source='gan', axis=None, num_slices=9, plot_title=True, show_plot=True, save_plot=False):
+    def plot_entropy(self, data_source='gan', axis=None, num_slices=9, figsize=None, plot_title=True, show_plot=True, save_plot=False):
         """Calculates and plots cell-wise normalized spatial entropy across the dataset.
 
         Args:
-            data_source (str, optional): Target to evaluate ('gan' or 'real'). Defaults to 'gan'.
+            data_source (str, optional): Target to evaluate ('gan' or 'flumy'). Defaults to 'gan'.
             axis (str, optional): Axis to slice ('X', 'Y', 'Z'). If None, processes all. Defaults to None.
-            num_slices (int, optional): Slices to plot per axis (1, 3, or 9). Defaults to 9.
+            num_slices (int, optional): Slices to plot per axis. Defaults to 9.
+            figsize (tuple, optional): Figure size as (width, height) in inches. Passed to subplot helper.
+                If None, auto-computed based on num_slices.
+            plot_title (bool, optional): If True, displays a suptitle. Defaults to True.
             show_plot (bool, optional): If True, displays the plot interactively. Defaults to True.
             save_plot (bool, optional): If True, saves the plot to the output directory. Defaults to False.
 
         Raises:
             ValueError: If input arguments do not match expected constraints.
         """
-        valid_sources = ['gan', 'real']
+        valid_sources = ['gan', 'flumy']
         if data_source not in valid_sources:
             raise ValueError(f"Invalid data_source '{data_source}'. Choose from {valid_sources}.")
-            
-        valid_slices = [1, 3, 9]
-        if num_slices not in valid_slices:
-            raise ValueError(f"num_slices must be 1, 3, or 9. Received: {num_slices}")
             
         if axis:
             axis = axis.upper()
@@ -701,20 +799,20 @@ class PostProcessing:
         if data_source == 'gan' and not self.gan_data:
             self.load_gan_samples()
         
-        # WE MUST LOAD REAL DATA: Even if plotting 'gan', we need 'real' data to compute the baseline H_max
-        if not self.data_samples:
-            self.load_data_samples()
+        # Flumy data is always needed to compute the baseline H_max
+        if not self.flumy_samples:
+            self.load_flumy_samples()
             
-        target_data = self.gan_data if data_source == 'gan' else self.data_samples
+        target_data = self.gan_data if data_source == 'gan' else self.flumy_samples
         num_total = len(target_data)
         axes_to_plot = [axis] if axis else ['Z', 'Y', 'X']
 
-        # NEW LOGIC: Calculate theoretical max entropy strictly from the REAL dataset
-        real_global_probs = self._get_global_proportions(self.data_samples)
-        h_max = self._calculate_h_max(real_global_probs) * 1.3
+        flumy_global_probs = self._get_global_proportions(self.flumy_samples)
+        h_max = self._calculate_h_max(flumy_global_probs) * 1.3
         
-        print(f"\n--- Generating {data_source.upper()} Normalized Entropy Matrices ---")
-        print(f"Real Dataset Baseline Proportions: {[round(p, 4) for p in real_global_probs]}")
+        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
+        print(f"\n--- Generating {display_name} Normalized Entropy Matrices ---")
+        print(f"{self.flumy_name} Baseline Proportions: {[round(p, 4) for p in flumy_global_probs]}")
         print(f"Target Baseline H_max:  {h_max:.4f} bits")
 
         nz, ny, nx = target_data[0].shape
@@ -731,12 +829,11 @@ class PostProcessing:
             if 'Y' in stacks: stacks['Y'][i] = data_3d[:, slices_dict['Y'], :].swapaxes(0, 1)
             if 'X' in stacks: stacks['X'][i] = data_3d[:, :, slices_dict['X']].transpose(2, 0, 1)
 
-        # Pass h_max to the helper
-        if 'Z' in stacks: self._plot_entropy_helper(stacks['Z'], slices_dict['Z'], 'Z', 'X', 'Y', data_source, h_max, plot_title, show_plot, save_plot)
-        if 'Y' in stacks: self._plot_entropy_helper(stacks['Y'], slices_dict['Y'], 'Y', 'X', 'Z', data_source, h_max, plot_title, show_plot, save_plot)
-        if 'X' in stacks: self._plot_entropy_helper(stacks['X'], slices_dict['X'], 'X', 'Y', 'Z', data_source, h_max, plot_title, show_plot, save_plot)
+        if 'Z' in stacks: self._plot_entropy_helper(stacks['Z'], slices_dict['Z'], 'Z', 'X', 'Y', data_source, h_max, figsize, plot_title, show_plot, save_plot)
+        if 'Y' in stacks: self._plot_entropy_helper(stacks['Y'], slices_dict['Y'], 'Y', 'X', 'Z', data_source, h_max, figsize, plot_title, show_plot, save_plot)
+        if 'X' in stacks: self._plot_entropy_helper(stacks['X'], slices_dict['X'], 'X', 'Y', 'Z', data_source, h_max, figsize, plot_title, show_plot, save_plot)
 
-    def _plot_entropy_helper(self, slices_stack, slice_indices, axis_name, xlabel, ylabel, data_source, h_max, plot_title, show_plot, save_plot):
+    def _plot_entropy_helper(self, slices_stack, slice_indices, axis_name, xlabel, ylabel, data_source, h_max, figsize, plot_title, show_plot, save_plot):
         """Internal helper to compute, format, and render normalized entropy charts.
 
         Args:
@@ -745,61 +842,64 @@ class PostProcessing:
             axis_name (str): Label of the slicing axis ('X', 'Y', or 'Z').
             xlabel (str): Label for the horizontal axis of the output plot.
             ylabel (str): Label for the vertical axis of the output plot.
-            data_source (str): Identifier string ('gan' or 'real') for title formatting.
+            data_source (str): Identifier string ('gan' or 'flumy') for title formatting.
             h_max (float): The theoretical maximum entropy (bits) for normalization.
+            figsize (tuple or None): Figure size as (width, height). If None, auto-computed.
+            plot_title (bool): Display suptitle if True.
             show_plot (bool): Display plot interactively if True.
             save_plot (bool): Save plot to output directory if True.
         """
         num_realizations, n_slices, dim_y, dim_x = slices_stack.shape
-        facies_values = [1, 4, 8]
+        facies_values = self.cfg['codes']
         norm = mcolors.Normalize(vmin=0, vmax=1.0) 
 
-        if n_slices == 1:
+        if figsize:
+            ncols = min(n_slices, 4)
+            nrows = math.ceil(n_slices / ncols)
+            fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+        elif n_slices == 1:
             fig, axes = plt.subplots(1, 1, figsize=(6, 5))
-            axes_list = [axes]  
-        elif n_slices == 3:
-            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-            axes_list = axes.flatten()
-        else: 
-            fig, axes = plt.subplots(3, 3, figsize=(15, 12))
-            axes_list = axes.flatten()
+        elif n_slices <= 3:
+            fig, axes = plt.subplots(1, n_slices, figsize=(5 * n_slices, 5))
+        else:
+            ncols = min(n_slices, 4)
+            nrows = math.ceil(n_slices / ncols)
+            fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows))
+
+        axes_list = np.atleast_1d(axes).flatten()
 
         for idx, slice_val in enumerate(slice_indices):
             probs = np.zeros((len(facies_values), dim_y, dim_x))
             for i, f_val in enumerate(facies_values):
                 probs[i] = np.sum(slices_stack[:, idx, :, :] == f_val, axis=0) / num_realizations
             
-            import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 entropy_map = entropy(probs, base=2, axis=0)
-                # Normalize the map using H_max
                 if h_max > 0:
                     entropy_map = entropy_map / h_max
                 
             im = axes_list[idx].imshow(entropy_map, cmap='magma', origin='lower', norm=norm)
             axes_list[idx].set_title(f"{axis_name}-Slice = {slice_val}")
             
-            if n_slices == 1 or (n_slices == 3 and idx == 0) or (n_slices == 9 and idx % 3 == 0):
+            ncols_actual = min(n_slices, 4) if n_slices > 3 else n_slices
+            if idx % ncols_actual == 0:
                 axes_list[idx].set_ylabel(ylabel)
-            if n_slices == 1 or n_slices == 3 or (n_slices == 9 and idx >= 6):
+            nrows_actual = math.ceil(n_slices / ncols_actual)
+            if idx >= (nrows_actual - 1) * ncols_actual:
                 axes_list[idx].set_xlabel(xlabel)
 
-        if n_slices == 1:
-            fig.subplots_adjust(right=0.8)
-            cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
-        elif n_slices == 3:
-            fig.subplots_adjust(right=0.9)
-            cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-        else:
-            fig.subplots_adjust(right=0.85)
-            cbar_ax = fig.add_axes([0.88, 0.15, 0.03, 0.7])
-            
+        for idx in range(n_slices, len(axes_list)):
+            axes_list[idx].set_visible(False)
+
+        fig.subplots_adjust(right=0.88)
+        cbar_ax = fig.add_axes([0.90, 0.15, 0.02, 0.7])
         fig.colorbar(im, cax=cbar_ax).set_label('Normalized Entropy (0 to 1)', rotation=270, labelpad=15)
         
         plane = {'Z': 'XY', 'Y': 'ZX', 'X': 'ZY'}[axis_name]
+        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
         if plot_title:
-            plt.suptitle(f"{data_source.upper()} Data: {plane} Plane Normalized Cell-Wise Entropy ({num_realizations} Realizations)", fontsize=16)
+            plt.suptitle(f"{display_name}: {plane} Plane Normalized Cell-Wise Entropy ({num_realizations} Realizations)", fontsize=16)
 
         if save_plot:
             path = os.path.join(self.output_dir, f"norm_entropy_{data_source}_{plane}_{num_realizations}_samples_{n_slices}_slices.png")
@@ -821,22 +921,16 @@ class PostProcessing:
         Returns:
             float: The computed spatial delentropy in bits.
         """
-        # 1. Compute discrete finite differences (gradients) along Z, Y, and X axes
-        # We use np.diff and pad to maintain the original shape of the array
         dz = np.pad(np.diff(data_array, axis=0), ((0, 1), (0, 0), (0, 0)), mode='edge')
         dy = np.pad(np.diff(data_array, axis=1), ((0, 0), (0, 1), (0, 0)), mode='edge')
         dx = np.pad(np.diff(data_array, axis=2), ((0, 0), (0, 0), (0, 1)), mode='edge')
 
-        # 2. Flatten and stack to create the phase space of gradient vectors (dz, dy, dx)
         gradients = np.vstack([dz.flatten(), dy.flatten(), dx.flatten()]).T
 
-        # 3. Calculate Deldensity (the joint 3D histogram of gradient occurrences)
         _, counts = np.unique(gradients, axis=0, return_counts=True)
         
-        # 4. Convert counts to probabilities
         probabilities = counts / counts.sum()
 
-        # 5. Calculate the Shannon joint entropy of the gradient field
         # The paper halves the 2D entropy to account for Papoulis' sampling redundancy, 
         # but for comparative metrics between datasets, the raw joint entropy is an excellent structural indicator.
         spatial_entropy = entropy(probabilities, base=2)
@@ -848,113 +942,100 @@ class PostProcessing:
         return delentropy
 
     def compare_structural_delentropy(self):
-        """Evaluates and compares the spatial Delentropy of Real vs GAN datasets."""
+        """Evaluates and compares the spatial Delentropy of Flumy vs GAN datasets."""
         if not self.gan_data: self.load_gan_samples()
-        if not self.data_samples: seflumy()
+        if not self.flumy_samples: self.load_flumy_samples()
 
-        print("\n--- Computing 3D Spatial Delentropy (Structural Complexity) ---")
+        print(f"\n--- Computing 3D Spatial Delentropy (Structural Complexity) ---")
         
-        real_entropies = [self.compute_spatial_delentropy(arr) for arr in self.data_samples]
+        flumy_entropies = [self.compute_spatial_delentropy(arr) for arr in self.flumy_samples]
         gan_entropies = [self.compute_spatial_delentropy(arr) for arr in self.gan_data]
 
-        real_mean = np.mean(real_entropies)
+        flumy_mean = np.mean(flumy_entropies)
         gan_mean = np.mean(gan_entropies)
         
-        print(f"Real Data Mean Delentropy: {real_mean:.4f} bits")
-        print(f"GAN Data Mean Delentropy:  {gan_mean:.4f} bits")
-        print(f"Difference (GAN - Real):   {gan_mean - real_mean:.4f} bits")
+        print(f"{self.flumy_name} Mean Delentropy: {flumy_mean:.4f} bits")
+        print(f"{self.gan_name} Mean Delentropy:  {gan_mean:.4f} bits")
+        print(f"Difference ({self.gan_name} - {self.flumy_name}):   {gan_mean - flumy_mean:.4f} bits")
         
-        if abs(gan_mean - real_mean) < 0.1:
-            print("-> The GAN exhibits excellent spatial structural fidelity compared to the real data.")
+        if abs(gan_mean - flumy_mean) < 0.1:
+            print(f"-> The {self.gan_name} exhibits excellent spatial structural fidelity compared to {self.flumy_name}.")
         else:
             print("-> A notable difference in spatial entropy suggests structural deviations (e.g., over-smoothing or excessive noise).")
             
-        return {'real_delentropy_mean': real_mean, 'gan_delentropy_mean': gan_mean}
+        return {'flumy_delentropy_mean': flumy_mean, 'gan_delentropy_mean': gan_mean}
 
-    def plot_local_delentropy_map(self, data_source='gan', slice_idx=None, window_size=5):
+    def plot_local_delentropy_map(self, data_source='gan', slice_idx=None, window_size=5, figsize=None):
         """Generates and plots a 2D spatial map of local Delentropy using a sliding window.
         
         Args:
-            data_source (str): 'gan' or 'real'.
+            data_source (str): 'gan' or 'flumy'.
             slice_idx (int, optional): The Z-slice index to plot. If None, picks the middle slice.
             window_size (int, optional): The size of the sliding window (must be odd, e.g., 5, 7, 9).
+            figsize (tuple, optional): Figure size as (width, height) in inches. Defaults to (14, 6).
         """
         if window_size % 2 == 0:
             raise ValueError("window_size must be an odd number (e.g., 3, 5, 7).")
 
-        # 1. Load data and select a random realization
         if data_source == 'gan' and not self.gan_data: self.load_gan_samples()
-        if data_source == 'real' and not self.data_samples: seflumy()
+        if data_source == 'flumy' and not self.flumy_samples: self.load_flumy_samples()
         
-        target_data = self.gan_data if data_source == 'gan' else self.data_samples
+        target_data = self.gan_data if data_source == 'gan' else self.flumy_samples
         volume = target_data[random.randint(0, len(target_data) - 1)]
         
-        # Select middle Z-slice if none provided
         if slice_idx is None:
             slice_idx = volume.shape[0] // 2
             
         slice_2d = volume[slice_idx, :, :]
         ny, nx = slice_2d.shape
         
-        # 2. Pad the slice so the sliding window can reach the edges
         pad_w = window_size // 2
         padded_slice = np.pad(slice_2d, pad_w, mode='edge')
         
-        # 3. Extract all local patches using a sliding window
         windows = view_as_windows(padded_slice, (window_size, window_size))
         
-        # Prepare the output heatmap array
         local_entropy_map = np.zeros((ny, nx))
         
         print(f"Calculating local Delentropy map (Window: {window_size}x{window_size})...")
         
-        # 4. Calculate Delentropy for each local patch
         for y in range(ny):
             for x in range(nx):
                 patch = windows[y, x]
                 
-                # Compute discrete gradients (dy, dx) within the patch
-                # We trim by [:, :-1] and [:-1, :] so both gradient arrays have shape (w-1, w-1)
                 dy = np.diff(patch, axis=0)[:, :-1].flatten()
                 dx = np.diff(patch, axis=1)[:-1, :].flatten()
                 
                 gradients = np.vstack([dy, dx]).T
                 
-                # Build local Deldensity and compute Shannon entropy
                 _, counts = np.unique(gradients, axis=0, return_counts=True)
                 probs = counts / counts.sum()
                 
                 # Halve the entropy for parsimony (as defined in the Delentropy literature)
                 local_entropy_map[y, x] = entropy(probs, base=2) / 2.0
 
-        # 5. Visual Rendering
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        figsize = figsize or (14, 6)
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
         
-        # Plot A: Original Geological Facies
         custom_cmap, legend_patches = self._create_colormap_and_legend()
-        if custom_cmap:
-            # Map physical codes (1, 4, 8) to (0, 1, 2) for the colormap index
-            display_slice = np.zeros_like(slice_2d)
-            display_slice[slice_2d == 4] = 1
-            display_slice[slice_2d == 8] = 2
-            im0 = axes[0].imshow(display_slice, cmap=custom_cmap, origin='lower')
-            axes[0].legend(handles=legend_patches, loc='upper right')
-        else:
-            im0 = axes[0].imshow(slice_2d, cmap='viridis', origin='lower')
+        display_slice = np.zeros_like(slice_2d)
+        display_slice[slice_2d == 4] = 1
+        display_slice[slice_2d == 8] = 2
+        im0 = axes[0].imshow(display_slice, cmap=custom_cmap, origin='lower')
+        axes[0].legend(handles=legend_patches, loc='upper right')
             
         axes[0].set_title(f"Original Facies (Z-Slice {slice_idx})")
         
-        # Plot B: Local Delentropy Heatmap
         im1 = axes[1].imshow(local_entropy_map, cmap='magma', origin='lower')
         axes[1].set_title(f"Local Delentropy Map ({window_size}x{window_size} Window)")
         fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04, label="Local Spatial Entropy (bits)")
         
-        plt.suptitle(f"{data_source.upper()} Data - Spatial Structural Mapping", fontsize=16)
+        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
+        plt.suptitle(f"{display_name} - Spatial Structural Mapping", fontsize=16)
         plt.tight_layout()
         plt.show()
     
     def compute_slice_metrics(self, axis='Z', plot=False):
-        """Computes slice-wise aggregate scalar metrics comparing GAN to Real distributions.
+        """Computes slice-wise aggregate scalar metrics comparing GAN to Flumy distributions.
         
         Evaluates Mean Normalized Entropy and Jensen-Shannon Divergence (JSD) 
         across EVERY slice in the specified axis.
@@ -965,223 +1046,223 @@ class PostProcessing:
 
         Returns:
             tuple: 
-                - pandas.DataFrame: Contains Slice Index, Real/GAN Entropy, and JSD for ALL slices.
+                - pandas.DataFrame: Contains Slice Index, Flumy/GAN Entropy, and JSD for ALL slices.
                 - dict: Mean and Standard Deviation for Entropy and JSD across the axis.
         """
         if not self.gan_data: self.load_gan_samples()
-        if not self.data_samples: seflumy()
+        if not self.flumy_samples: self.load_flumy_samples()
             
         print(f"\n--- Computing Scalar Metrics for ALL {axis}-Axis Slices ---")
         
-        real_global_probs = self._get_global_proportions(self.data_samples)
-        h_max = self._calculate_h_max(real_global_probs)
+        flumy_global_probs = self._get_global_proportions(self.flumy_samples)
+        h_max = self._calculate_h_max(flumy_global_probs)
         
-        facies_values = [1, 4, 8]
-        num_real_samples = len(self.data_samples)
+        facies_values = self.cfg['codes']
+        num_flumy_samples = len(self.flumy_samples)
         num_gan_samples = len(self.gan_data)
         
-        nz, ny, nx = self.data_samples[0].shape
+        nz, ny, nx = self.flumy_samples[0].shape
         dims = {'Z': nz, 'Y': ny, 'X': nx}
         
-        # NEW: Evaluate every single slice along the chosen axis
         slice_indices = range(dims[axis])
         results = []
 
-        # Move warnings filter outside the loop for speed
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
             with tqdm(total=len(slice_indices), desc=f"JS-entropy 2D ({axis}-axis)") as pbar:
                 for slice_idx in slice_indices:
                     if axis == 'Z':
-                        real_slices = np.array([d[slice_idx, :, :] for d in self.data_samples])
+                        flumy_slices = np.array([d[slice_idx, :, :] for d in self.flumy_samples])
                         gan_slices = np.array([d[slice_idx, :, :] for d in self.gan_data])
                     elif axis == 'Y':
-                        real_slices = np.array([d[:, slice_idx, :] for d in self.data_samples])
+                        flumy_slices = np.array([d[:, slice_idx, :] for d in self.flumy_samples])
                         gan_slices = np.array([d[:, slice_idx, :] for d in self.gan_data])
                     else: 
-                        real_slices = np.array([d[:, :, slice_idx] for d in self.data_samples])
+                        flumy_slices = np.array([d[:, :, slice_idx] for d in self.flumy_samples])
                         gan_slices = np.array([d[:, :, slice_idx] for d in self.gan_data])
                         
-                    dim_y, dim_x = real_slices.shape[1], real_slices.shape[2]
+                    dim_y, dim_x = flumy_slices.shape[1], flumy_slices.shape[2]
                     
-                    p_real = np.zeros((len(facies_values), dim_y, dim_x))
+                    p_flumy = np.zeros((len(facies_values), dim_y, dim_x))
                     p_gan = np.zeros((len(facies_values), dim_y, dim_x))
                     
                     for i, f_val in enumerate(facies_values):
-                        p_real[i] = np.sum(real_slices == f_val, axis=0) / num_real_samples
+                        p_flumy[i] = np.sum(flumy_slices == f_val, axis=0) / num_flumy_samples
                         p_gan[i] = np.sum(gan_slices == f_val, axis=0) / num_gan_samples
                         
-                    # Normalize Real Entropy against the Real H_max
-                    entropy_real = np.nanmean(entropy(p_real, base=2, axis=0))
-                    if h_max > 0: entropy_real /= h_max
+                    entropy_flumy = np.nanmean(entropy(p_flumy, base=2, axis=0))
+                    if h_max > 0: entropy_flumy /= h_max
                     
-                    # Normalize GAN Entropy against the Real H_max
                     entropy_gan = np.nanmean(entropy(p_gan, base=2, axis=0))
                     if h_max > 0: entropy_gan /= h_max
                     
-                    # FIX: Added axis=0 to properly calculate pixel-wise distance!
-                    js_distance = jensenshannon(p_real, p_gan, base=2, axis=0)
+                    js_distance = jensenshannon(p_flumy, p_gan, base=2, axis=0)
                     mean_jsd = np.nanmean(js_distance ** 2)
                     
                     results.append({
                         'Axis': axis,
                         'Slice_Index': slice_idx,
-                        'Real_Norm_Entropy': entropy_real,
+                        'Flumy_Norm_Entropy': entropy_flumy,
                         'GAN_Norm_Entropy': entropy_gan,
-                        'JSD_Real_vs_GAN': mean_jsd
+                        'JSD_Flumy_vs_GAN': mean_jsd
                     })
                     pbar.update(1)
                 
-        # Convert to DataFrame
         df_results = pd.DataFrame(results)
         
-        # Calculate Mean and Std Deviation
         summary_stats = {
-            'Real_Entropy_Mean': df_results['Real_Norm_Entropy'].mean(),
-            'Real_Entropy_Std': df_results['Real_Norm_Entropy'].std(),
+            'Flumy_Entropy_Mean': df_results['Flumy_Norm_Entropy'].mean(),
+            'Flumy_Entropy_Std': df_results['Flumy_Norm_Entropy'].std(),
             'GAN_Entropy_Mean': df_results['GAN_Norm_Entropy'].mean(),
             'GAN_Entropy_Std': df_results['GAN_Norm_Entropy'].std(),
-            'JSD_Mean': df_results['JSD_Real_vs_GAN'].mean(),
-            'JSD_Std': df_results['JSD_Real_vs_GAN'].std(),
+            'JSD_Mean': df_results['JSD_Flumy_vs_GAN'].mean(),
+            'JSD_Std': df_results['JSD_Flumy_vs_GAN'].std(),
         }
 
         print(f"\n--- Summary Statistics ({axis}-Axis) ---")
-        print(f"Real Entropy: {summary_stats['Real_Entropy_Mean']:.4f} ± {summary_stats['Real_Entropy_Std']:.4f}")
-        print(f"GAN Entropy:  {summary_stats['GAN_Entropy_Mean']:.4f} ± {summary_stats['GAN_Entropy_Std']:.4f}")
+        print(f"{self.flumy_name} Entropy: {summary_stats['Flumy_Entropy_Mean']:.4f} ± {summary_stats['Flumy_Entropy_Std']:.4f}")
+        print(f"{self.gan_name} Entropy:  {summary_stats['GAN_Entropy_Mean']:.4f} ± {summary_stats['GAN_Entropy_Std']:.4f}")
         print(f"JSD (Spatial): {summary_stats['JSD_Mean']:.4f} ± {summary_stats['JSD_Std']:.4f}\n")
         
-        # Save to CSV
         csv_path = os.path.join(self.output_dir, f"slice_metrics_normalized_{axis}.csv")
         df_results.to_csv(csv_path, index=False)
         print(f"Saved full slice metrics to: {csv_path}")
 
-        # Optional Plotting
         if plot:
             self._plot_metric_distributions(df_results, axis)
             
         return df_results, summary_stats
     
-    def plot_2d_slices(self, data_source='gan', num_samples=1, num_slices=1, axis=None, show_plot=True, save_plot=False):
+    def plot_2d_slices(self, data_source='gan', num_samples=1, num_slices=1, axis=None, 
+                       slice_range=None, slice_indices=None, figsize=None, 
+                       show_plot=True, save_plot=False):
         """Visualizes 2D cross-sections (Horizontal and Vertical) of 3D realizations.
         
         Args:
-            data_source (str): Target dataset to evaluate ('gan' or 'real').
+            data_source (str): Target dataset to evaluate ('gan' or 'flumy').
             num_samples (int): Number of realizations to plot.
-            num_slices (int): Number of slices to extract per realization (1, 3, or 9).
+            num_slices (int): Number of slices to extract per realization. Ignored when
+                slice_indices is provided.
             axis (str, optional): Specific axis to slice ('X', 'Y', 'Z'). If None, plots all 3.
+            slice_range (tuple, optional): Restricts slicing to a sub-range of the axis as
+                (start, end). When provided, num_slices evenly-spaced positions are sampled
+                within this range. E.g., slice_range=(80, 120) with num_slices=5.
+            slice_indices (list, optional): Explicit list of integer slice positions. Overrides
+                both num_slices and slice_range when provided.
+            figsize (tuple, optional): Figure size as (width, height) in inches. If None,
+                auto-computed based on layout.
             show_plot (bool): If True, displays the plot interactively.
             save_plot (bool): If True, saves the plot to the output directory.
         """
-        valid_slices = [1, 3, 9]
-        if num_slices not in valid_slices:
-            raise ValueError(f"num_slices must be 1, 3, or 9. Received: {num_slices}")
-            
         if axis and axis.upper() not in ['X', 'Y', 'Z']:
             raise ValueError("axis must be 'X', 'Y', 'Z', or None.")
             
         axis = axis.upper() if axis else None
 
-        # Ensure data is loaded
         if data_source == 'gan' and not self.gan_data: 
             self.load_gan_samples(limit=num_samples)
-        if data_source == 'real' and not self.data_samples: 
-            seflumy(limit=num_samples)
+        if data_source == 'flumy' and not self.flumy_samples: 
+            self.load_flumy_samples(limit=num_samples)
             
-        target_data = self.gan_data if data_source == 'gan' else self.data_samples
+        target_data = self.gan_data if data_source == 'gan' else self.flumy_samples
         files_list = self.gan_files if data_source == 'gan' else self.data_files
         
         plot_limit = min(num_samples, len(target_data))
-        print(f"\n--- Generating 2D Slices ({data_source.upper()} Data | {num_slices} Slices | {plot_limit} Samples) ---")
+        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
 
-        # 1. Match colors exactly to PyVista 3D settings
-        colors = ['#f1970f', '#fffc65', '#33ff00']
+        colors = [self.cfg['colors'][c] for c in self.cfg['codes']]
         cmap = ListedColormap(colors)
-        labels = ["Channel", "Crevasse Splay/Levee", "Floodplain"]
-        legend_patches = [mpatches.Patch(color=colors[i], label=labels[i]) for i in range(3)]
+        labels = [self.cfg['names'][c] for c in self.cfg['codes']]
+        legend_patches = [mpatches.Patch(color=colors[i], label=labels[i]) for i in range(len(colors))]
 
         for idx in range(plot_limit):
             data_3d = target_data[idx]
             
-            # 2. Map physical codes (1, 4, 8) to (0, 1, 2) for the colormap
             display_data = np.zeros_like(data_3d)
-            display_data[data_3d == 1] = 0  
-            display_data[data_3d == 4] = 1  
-            display_data[data_3d == 8] = 2  
+            for map_idx, code in enumerate(self.cfg['codes']):
+                display_data[data_3d == code] = map_idx
 
             depth, height, width = display_data.shape
+
+            def _resolve_slice_indices(dim_size):
+                """Resolves final slice positions from slice_indices, slice_range, or linspace."""
+                if slice_indices is not None:
+                    return np.array(slice_indices, dtype=int)
+                elif slice_range is not None:
+                    return np.linspace(slice_range[0], slice_range[1], num_slices, dtype=int)
+                else:
+                    return np.linspace(0, dim_size - 1, num_slices, dtype=int)
+
+            z_idx = _resolve_slice_indices(depth)
+            y_idx = _resolve_slice_indices(height)
+            x_idx = _resolve_slice_indices(width)
             
-            # 3. Calculate evenly spaced slices across the dimensions
-            z_idx = np.linspace(0, depth - 1, num_slices, dtype=int)
-            y_idx = np.linspace(0, height - 1, num_slices, dtype=int)
-            x_idx = np.linspace(0, width - 1, num_slices, dtype=int)
+            effective_num_slices = len(slice_indices) if slice_indices is not None else num_slices
             
             filename = os.path.basename(files_list[idx]) if idx < len(files_list) else f"Sample_{idx}"
 
             if axis is None:
-                fig, axes = plt.subplots(num_slices, 3, figsize=(18, 5 * num_slices))
+                effective_figsize = figsize or (18, 5 * effective_num_slices)
+                fig, axes = plt.subplots(effective_num_slices, 3, figsize=effective_figsize)
                 
-                # Expand dimensions if only 1 slice to keep the axes[row, col] indexing consistent
-                if num_slices == 1:
+                if effective_num_slices == 1:
                     axes = np.expand_dims(axes, axis=0) 
                 
-                for i in range(num_slices):
-                    # Horizontal Slice (Z)
-                    axes[i, 0].imshow(display_data[z_idx[i], :, :], cmap=cmap, origin='lower', vmin=0, vmax=2)
+                for i in range(effective_num_slices):
+                    axes[i, 0].imshow(display_data[z_idx[i], :, :], cmap=cmap, origin='lower', vmin=0, vmax=len(self.cfg['codes'])-1)
                     axes[i, 0].set_title(f"Horizontal Slice (Z={z_idx[i]})")
                     axes[i, 0].set_xlabel("X (Width)")
                     axes[i, 0].set_ylabel("Y (Height)")
 
-                    # Vertical Section (Y)
-                    axes[i, 1].imshow(display_data[:, y_idx[i], :], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=2) 
+                    axes[i, 1].imshow(display_data[:, y_idx[i], :], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=len(self.cfg['codes'])-1) 
                     axes[i, 1].set_title(f"Vertical Section (Y={y_idx[i]})")
                     axes[i, 1].set_xlabel("X (Width)")
                     axes[i, 1].set_ylabel("Z (Depth)")
 
-                    # Vertical Section (X)
-                    axes[i, 2].imshow(display_data[:, :, x_idx[i]], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=2)
+                    axes[i, 2].imshow(display_data[:, :, x_idx[i]], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=len(self.cfg['codes'])-1)
                     axes[i, 2].set_title(f"Vertical Section (X={x_idx[i]})")
                     axes[i, 2].set_xlabel("Y (Height)")
                     axes[i, 2].set_ylabel("Z (Depth)")
 
             else:
-                if num_slices == 1:
-                    fig, axes = plt.subplots(1, 1, figsize=(8, 5))
-                    axes_list = [axes]
-                elif num_slices == 3:
-                    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-                    axes_list = axes.flatten()
-                else: # 9 slices
-                    fig, axes = plt.subplots(3, 3, figsize=(18, 12))
-                    axes_list = axes.flatten()
+                ncols = min(effective_num_slices, 4)
+                nrows = math.ceil(effective_num_slices / ncols)
+                effective_figsize = figsize or (5 * ncols, 5 * nrows)
+                
+                fig, axes = plt.subplots(nrows, ncols, figsize=effective_figsize)
+                axes_list = np.atleast_1d(axes).flatten()
 
-                for i in range(num_slices):
+                idx_map = {'Z': z_idx, 'Y': y_idx, 'X': x_idx}
+                current_indices = idx_map[axis]
+
+                for i in range(effective_num_slices):
                     ax = axes_list[i]
                     if axis == 'Z':
-                        ax.imshow(display_data[z_idx[i], :, :], cmap=cmap, origin='lower', vmin=0, vmax=2)
-                        ax.set_title(f"Horizontal Slice (Z={z_idx[i]})")
+                        ax.imshow(display_data[current_indices[i], :, :], cmap=cmap, origin='lower', vmin=0, vmax=len(self.cfg['codes'])-1)
+                        ax.set_title(f"Horizontal Slice (Z={current_indices[i]})")
                         ax.set_xlabel("X (Width)")
                         ax.set_ylabel("Y (Height)")
                     elif axis == 'Y':
-                        ax.imshow(display_data[:, y_idx[i], :], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=2)
-                        ax.set_title(f"Vertical Section (Y={y_idx[i]})")
+                        ax.imshow(display_data[:, current_indices[i], :], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=len(self.cfg['codes'])-1)
+                        ax.set_title(f"Vertical Section (Y={current_indices[i]})")
                         ax.set_xlabel("X (Width)")
                         ax.set_ylabel("Z (Depth)")
                     elif axis == 'X':
-                        ax.imshow(display_data[:, :, x_idx[i]], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=2)
-                        ax.set_title(f"Vertical Section (X={x_idx[i]})")
+                        ax.imshow(display_data[:, :, current_indices[i]], cmap=cmap, origin='lower', aspect=1, vmin=0, vmax=len(self.cfg['codes'])-1)
+                        ax.set_title(f"Vertical Section (X={current_indices[i]})")
                         ax.set_xlabel("Y (Height)")
                         ax.set_ylabel("Z (Depth)")
 
-            # 4. Final touches: Legend, title, layout
+                for i in range(effective_num_slices, len(axes_list)):
+                    axes_list[i].set_visible(False)
+
             fig.legend(handles=legend_patches, loc='lower center', ncol=3, bbox_to_anchor=(0.5, -0.02), fontsize=12)
-            plt.suptitle(f"Realization: {filename} | Shape: {data_3d.shape}", fontsize=16, fontweight='bold', y=1.02)
-            #plt.tight_layout()
+            plt.suptitle(f"{display_name} | Realization: {filename} | Shape: {data_3d.shape}", fontsize=16, fontweight='bold', y=1.02)
             
-            # 5. Output handling
             if save_plot:
                 ax_label = axis if axis else "All_Axes"
-                plot_path = os.path.join(self.output_dir, f"2d_slices_{data_source}_{ax_label}_{num_slices}slices_{filename.replace('.npy', '.png')}")
+                plot_path = os.path.join(self.output_dir, f"2d_slices_{data_source}_{ax_label}_{effective_num_slices}slices_{filename.replace('.npy', '.png')}")
                 plt.savefig(plot_path, bbox_inches='tight', dpi=300)
                 print(f"Saved 2D slices to: {plot_path}")
                 
@@ -1190,17 +1271,20 @@ class PostProcessing:
             else:
                 plt.close(fig)
 
-    def plot_3d_pyvista(self, data_source='gan', mode='separate', target_filename=None, target_facies=None, show_legend=True, show_plot=True, save_plot=False):
+    def plot_3d_pyvista(self, data_source='gan', mode='separate', target_filename=None, target_facies=None, 
+                        figsize=None, show_legend=True, show_plot=True, save_plot=False):
         """Renders an interactive or static 3D volumetric plot of a geological sample.
 
         Args:
-            data_source (str, optional): Target dataset to sample ('gan' or 'real'). Defaults to 'gan'.
+            data_source (str, optional): Target dataset to sample ('gan' or 'flumy'). Defaults to 'gan'.
             mode (str, optional): Visual layout mode ('separate' for subplots, or 'combined' for 
                 a single overlaid volume). Defaults to 'separate'.
             target_filename (str, optional): Specific filename to load (e.g., 'realization_01.npy'). 
                 If None, a random sample is chosen from loaded data.
             target_facies (int or list, optional): Specific facies code(s) to isolate (e.g., 1, 4, or 8). 
                 If None, plots all standard facies.
+            figsize (tuple, optional): Window size as (width, height) in pixels for the PyVista renderer.
+                If None, uses default (800 * num_subplots, 800) for separate or (800, 800) for combined.
             show_legend (bool, optional): Toggles legend in combined mode. Defaults to True.
             show_plot (bool, optional): If True, opens an interactive PyVista window. Defaults to True.
             save_plot (bool, optional): If True, saves an off-screen screenshot. Defaults to False.
@@ -1208,7 +1292,7 @@ class PostProcessing:
         Raises:
             ValueError: If input arguments do not match expected constraints.
         """
-        valid_sources = ['gan', 'real']
+        valid_sources = ['gan', 'flumy']
         valid_modes = ['separate', 'combined']
         
         if data_source not in valid_sources:
@@ -1223,9 +1307,12 @@ class PostProcessing:
             print("Error: 'pyvista' is not installed. Skipping 3D plot.")
             return
 
-        print(f"\n--- Generating 3D PyVista Plot ({data_source.upper()} Data | Mode: {mode.upper()}) ---")
+        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
+        print(f"\n--- Generating 3D PyVista Plot ({display_name} | Mode: {mode.upper()}) ---")
 
-        # 1. Determine which 3D array to plot (Specific File vs Random)
+        facies_colors = self.cfg['colors']
+        facies_titles = self.cfg['names']
+
         plot_identifier = ""
         if target_filename:
             file_list = self.gan_files if data_source == 'gan' else self.data_files
@@ -1237,16 +1324,15 @@ class PostProcessing:
                 plot_identifier = target_filename.split('.')[0]
             else:
                 print(f"Warning: '{target_filename}' not found. Falling back to random sample.")
-                target_filename = None # Trigger fallback
+                target_filename = None
 
         if not target_filename:
-            # Ensure data is loaded for random sampling
             if data_source == 'gan' and not self.gan_data:
                 self.load_gan_samples()
-            elif data_source == 'real' and not self.data_samples:
-                seflumy()
+            elif data_source == 'flumy' and not self.flumy_samples:
+                self.load_flumy_samples() 
                 
-            target_data = self.gan_data if data_source == 'gan' else self.data_samples
+            target_data = self.gan_data if data_source == 'gan' else self.flumy_samples
             random_idx = random.randint(0, len(target_data) - 1)
             data_3d = target_data[random_idx]
             plot_identifier = f"sample_{random_idx}"
@@ -1256,36 +1342,53 @@ class PostProcessing:
         grid.dimensions = (nx + 1, ny + 1, nz + 1)
         grid.cell_data['Facies'] = data_3d.transpose(2, 1, 0).flatten(order='F')
 
-        facies_colors = {1: '#f1970f', 4: '#fffc65', 8: '#33ff00'}
-        facies_titles = {1: "Channel", 4: "Crevasse Splay/Levee", 8: "Floodplain"}
-        
-        # 2. Determine which facies to plot/isolate
         if target_facies is None:
-            facies_to_plot = [1, 4, 8]
+            facies_to_plot = self.cfg['codes']
         elif isinstance(target_facies, int):
             facies_to_plot = [target_facies]
         else:
             facies_to_plot = target_facies
             
-        # Automatically switch to 'combined' if isolating only one facies to avoid redundant subplots
         if len(facies_to_plot) == 1 and mode == 'separate':
             mode = 'combined'
 
-        # 3. Setup Plotter Canvas
+        base_resolution = 800
+        scale_factor = 2
+        
         if mode == 'separate':
             num_subplots = len(facies_to_plot)
-            plotter = pv.Plotter(shape=(1, num_subplots), image_scale=4, off_screen=save_plot and not show_plot, window_size=(2400 * num_subplots, 2400))
+            default_window_size = (base_resolution * num_subplots, base_resolution)
         else:
-            plotter = pv.Plotter(shape=(1, 1), image_scale=4, off_screen=save_plot and not show_plot, window_size=(2400, 2400))
+            num_subplots = 1
+            default_window_size = (base_resolution, base_resolution)
+
+        window_size = figsize if figsize else default_window_size
+
+        if mode == 'separate':
+            plotter = pv.Plotter(
+                shape=(1, num_subplots), 
+                image_scale=scale_factor, 
+                off_screen=save_plot and not show_plot, 
+                window_size=window_size
+            )
+        else:
+            plotter = pv.Plotter(
+                shape=(1, 1), 
+                image_scale=scale_factor, 
+                off_screen=save_plot and not show_plot, 
+                window_size=window_size
+            )
             
-        # 4. Render Meshes
+        plotter.enable_anti_aliasing('msaa') 
+        plotter.add_title(title=display_name, font_size=12, color='black')
+            
         for i, f_val in enumerate(facies_to_plot):
             if f_val not in facies_colors:
-                continue # Skip unrecognized facies
+                continue
                 
             if mode == 'separate':
                 plotter.subplot(0, i)
-                plotter.add_text(facies_titles[f_val], font_size=200, color='black', shadow=True)
+                plotter.add_text(facies_titles[f_val], font_size=150, color='black', shadow=True) 
                 
             threshed = grid.threshold([f_val - 0.5, f_val + 0.5], scalars='Facies')
             
@@ -1308,7 +1411,6 @@ class PostProcessing:
         if mode == 'combined':
             plotter.view_isometric()
 
-        # 5. Output Handling
         suffix = f"_{'-'.join(map(str, facies_to_plot))}" if target_facies else ""
         plot_path = os.path.join(self.output_dir, f"3d_plot_{data_source}_{plot_identifier}_{mode}{suffix}.png")
         
@@ -1320,23 +1422,39 @@ class PostProcessing:
         else:
             plotter.close()
 
+
 class DistributionEvaluator:
     """Evaluates geological distributions using Multi-Scale Sliced Wasserstein Distance (MS-SWD).
     
-    Computes pairwise MS-SWD between Real and GAN samples, and reduces the distance 
-    matrix to a 2D embedding using Multidimensional Scaling (MDS) for visualization.
+    Provides dataset-agnostic computation of pairwise MS-SWD distance matrices
+    and multi-dataset MDS visualization. Each dataset's distance matrix and raw
+    samples are cached to disk, enabling efficient multi-run comparisons without 
+    reloading original data.
+
+    Attributes:
+        output_dir (str): Base directory where outputs are saved.
+        device (torch.device): PyTorch computation device.
+        ms_swd (MSSWD): The Multi-Scale Sliced Wasserstein Distance metric.
     """
+    DISTANCE_FILENAME = "msswd_distances.npz"
+
     def __init__(self, output_dir, device_type=None):
+        """Initializes the DistributionEvaluator.
+
+        Args:
+            output_dir (str): Base directory to save outputs. Individual dataset
+                embeddings are saved to their own subdirectories.
+            device_type (str, optional): PyTorch device string ('cuda:0', 'cpu'). 
+                If None, auto-detects GPU availability.
+        """
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # Set up PyTorch device (used later for the tensors, not the MSSWD object)
         if device_type:
             self.device = torch.device(device_type)
         else:
             self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         
-        # Initialize the MS-SWD metric without .to(self.device)
         self.ms_swd = MSSWD(
             n_levels=3,
             n_descriptors=512,
@@ -1345,150 +1463,215 @@ class DistributionEvaluator:
             n_proj=128,
             padding_mode='circular',
             combine_levels=True
-            # Note: The original author included `n_gpu=2` here. 
-            # You can add `n_gpu=1` if you are using a single GPU and experience issues.
         )
 
     def _prepare_tensors(self, data_list):
-        """Converts a list of 3D numpy arrays into PyTorch tensors with a channel dimension."""
-        # Expected shape for 3D convs: (N, C, Z, Y, X)
+        """Converts a list of 3D numpy arrays into PyTorch tensors with a channel dimension.
+
+        Args:
+            data_list (list): List of 3D numpy arrays of geological facies.
+
+        Returns:
+            torch.Tensor: 5D tensor of shape (N, 1, Z, Y, X) on the configured device.
+        """
         arr = np.stack(data_list)
         
-        # If the data is categorical (1, 4, 8), you might want to normalize it 
-        # or convert it to one-hot depending on how the GAN was trained.
-        # Assuming single channel continuous/categorical for now:
         if arr.ndim == 4:
-            arr = np.expand_dims(arr, axis=1) # Add channel dimension
+            arr = np.expand_dims(arr, axis=1)
             
         tensor = torch.tensor(arr, dtype=torch.float32).to(self.device)
         return tensor
 
-    def compute_msswd_mds(self, data_samples, gan_data, random_state=42, save_data=True, load_existing=False):
-        """Computes pairwise MS-SWD and applies MDS to generate 2D embeddings.
-        
-        Args:
-            data_samples (list): List of real sample arrays.
-            gan_data (list): List of GAN sample arrays.
-            random_state (int): Seed for MDS reproducibility.
-            save_data (bool): If True, saves the calculated arrays to a .npz file.
-            load_existing (bool): If True, attempts to load a previously saved .npz file 
-                from the output directory to bypass the computation.
-        """
-        save_path = os.path.join(self.output_dir, "msswd_mds_data.npz")
-        
-        # Check if we can load existing data to skip the 70-minute calculation!
-        if load_existing and os.path.exists(save_path):
-            print(f"Found existing data! Loading embeddings and distances from {save_path}...")
-            loaded_data = np.load(save_path)
-            return loaded_data['real_embeddings'], loaded_data['gan_embeddings'], loaded_data['distances']
+    def compute_embedding(self, samples, label, save_dir=None):
+        """Computes pairwise MS-SWD distances for a single dataset and caches results.
 
-        print(f"Preparing tensors for {len(data_samples)} Real and {len(gan_data)} GAN samples...")
-        n_real = len(data_samples)
-        n_gan = len(gan_data)
-        total_samples = n_real + n_gan
+        Calculates the full pairwise distance matrix between all samples using
+        MS-SWD and saves it along with the raw sample arrays to a .npz file
+        for later use by plot_multi_mds().
+
+        Args:
+            samples (list): List of 3D numpy arrays (geological volumes) for this dataset.
+            label (str): Human-readable label for this dataset (e.g., 'Flumy', 'VoxGAN_run1').
+                Used in progress bar and print statements.
+            save_dir (str, optional): Directory to save the distance file. If None,
+                uses self.output_dir. The file is always named 'msswd_distances.npz'.
+
+        Returns:
+            numpy.ndarray: Symmetric pairwise distance matrix of shape (N, N).
+        """
+        target_dir = save_dir or self.output_dir
+        os.makedirs(target_dir, exist_ok=True)
+        save_path = os.path.join(target_dir, self.DISTANCE_FILENAME)
+
+        n_samples = len(samples)
+        print(f"\nComputing MS-SWD distance matrix for '{label}' ({n_samples} samples)...")
         
-        real_tensor = self._prepare_tensors(data_samples)
-        gan_tensor = self._prepare_tensors(gan_data)
-        all_samples = torch.cat((real_tensor, gan_tensor), dim=0)
+        tensor = self._prepare_tensors(samples)
+        distances = np.zeros((n_samples, n_samples))
         
-        # Initialize an empty distance matrix
-        distances = np.zeros((total_samples, total_samples))
+        total_comparisons = (n_samples * (n_samples - 1)) // 2
         
-        # Calculate exactly how many comparisons we are making for the progress bar
-        total_comparisons = (total_samples * (total_samples - 1)) // 2
-        print(f"Computing {total_comparisons} pairwise Multi-Scale Sliced Wasserstein Distances...")
-        
-        # Note: This scales O(N^2) and can be very slow for large sample sizes
         with torch.no_grad():
-            # Initialize tqdm with the total number of calculations
-            with tqdm(total=total_comparisons, desc="MS-SWD Progress", unit="pair") as pbar:
-                for j in range(total_samples):
-                    for k in range(j + 1, total_samples):
-                        # Compute distance between sample j and sample k
-                        dist = self.ms_swd(all_samples[j:j+1], all_samples[k:k+1]).item()
+            with tqdm(total=total_comparisons, desc=f"MS-SWD [{label}]", unit="pair") as pbar:
+                for j in range(n_samples):
+                    for k in range(j + 1, n_samples):
+                        dist = self.ms_swd(tensor[j:j+1], tensor[k:k+1]).item()
                         distances[j, k] = dist
-                        distances[k, j] = dist # Matrix is symmetric
-                        
-                        # Update the progress bar by 1 after each comparison
+                        distances[k, j] = dist
                         pbar.update(1)
-                    
-        print("Applying Multidimensional Scaling (MDS)...")
+
+        samples_array = np.stack(samples)
+        np.savez(
+            save_path,
+            distances=distances,
+            samples=samples_array
+        )
+        print(f"Saved distance matrix ({n_samples}x{n_samples}) and samples to: {save_path}")
+        
+        return distances
+
+    def plot_multi_mds(self, datasets, random_state=42, figsize=None, 
+                       save_plot=True, show_plot=True):
+        """Generates a combined MDS scatter plot from multiple dataset distance caches.
+
+        Loads cached distance matrices and raw samples from each dataset directory,
+        computes cross-dataset pairwise MS-SWD distances, assembles a combined 
+        distance matrix, and applies MDS to produce a unified 2D embedding.
+
+        Args:
+            datasets (dict): Mapping of dataset labels to their output directories.
+                Each directory must contain 'msswd_distances.npz' (created by 
+                compute_embedding). Example:
+                    {
+                        'Flumy': 'outputs/flumy/',
+                        'VoxGAN_run1': 'outputs/run1/',
+                        'VoxGAN_run2': 'outputs/run2/'
+                    }
+            random_state (int, optional): Seed for MDS reproducibility. Defaults to 42.
+            figsize (tuple, optional): Figure size as (width, height) in inches. 
+                Defaults to (8, 8).
+            save_plot (bool, optional): If True, saves the plot to self.output_dir. 
+                Defaults to True.
+            show_plot (bool, optional): If True, displays the plot interactively. 
+                Defaults to True.
+
+        Returns:
+            tuple: (matplotlib.figure.Figure, matplotlib.axes.Axes) for further customization.
+
+        Raises:
+            FileNotFoundError: If any dataset directory is missing its distance file.
+                Run compute_embedding() for the missing dataset first.
+        """
+        print("\n--- Loading cached distance data ---")
+        
+        all_labels = list(datasets.keys())
+        cached_data = {}
+        
+        for label, data_dir in datasets.items():
+            dist_path = os.path.join(data_dir, self.DISTANCE_FILENAME)
+            if not os.path.exists(dist_path):
+                raise FileNotFoundError(
+                    f"Distance file not found at '{dist_path}'. "
+                    f"Run compute_embedding() for '{label}' first."
+                )
+            loaded = np.load(dist_path)
+            cached_data[label] = {
+                'distances': loaded['distances'],
+                'samples': loaded['samples']
+            }
+            print(f"  Loaded '{label}': {loaded['distances'].shape[0]} samples")
+
+        dataset_sizes = [cached_data[label]['distances'].shape[0] for label in all_labels]
+        total_samples = sum(dataset_sizes)
+        
+        combined_distances = np.zeros((total_samples, total_samples))
+        
+        # Fill in within-dataset blocks from cached matrices
+        offset = 0
+        offsets = {}
+        for label in all_labels:
+            n = cached_data[label]['distances'].shape[0]
+            offsets[label] = offset
+            combined_distances[offset:offset+n, offset:offset+n] = cached_data[label]['distances']
+            offset += n
+
+        # Compute cross-dataset distances
+        print("\nComputing cross-dataset MS-SWD distances...")
+        for i, label_a in enumerate(all_labels):
+            for label_b in all_labels[i+1:]:
+                samples_a = cached_data[label_a]['samples']
+                samples_b = cached_data[label_b]['samples']
+                
+                tensor_a = self._prepare_tensors(list(samples_a))
+                tensor_b = self._prepare_tensors(list(samples_b))
+                
+                n_a = len(samples_a)
+                n_b = len(samples_b)
+                off_a = offsets[label_a]
+                off_b = offsets[label_b]
+                
+                total_cross = n_a * n_b
+                with torch.no_grad():
+                    with tqdm(total=total_cross, desc=f"Cross [{label_a} × {label_b}]", unit="pair") as pbar:
+                        for j in range(n_a):
+                            for k in range(n_b):
+                                dist = self.ms_swd(tensor_a[j:j+1], tensor_b[k:k+1]).item()
+                                combined_distances[off_a + j, off_b + k] = dist
+                                combined_distances[off_b + k, off_a + j] = dist
+                                pbar.update(1)
+
+        print("\nApplying Multidimensional Scaling (MDS) on combined distance matrix...")
         reducer = MDS(
             n_components=2,
-            n_jobs=-1, # Use all CPU cores
+            n_jobs=-1,
             random_state=random_state,
             dissimilarity='precomputed'
         )
         
-        embeddings = reducer.fit_transform(distances)
+        embeddings = reducer.fit_transform(combined_distances)
         print(f"MDS stress: {reducer.stress_:.4f}")
-        
-        real_embeddings = embeddings[:n_real]
-        gan_embeddings = embeddings[n_real:]
-        
-        # Save the computed data to the output directory
-        if save_data:
-            np.savez(
-                save_path, 
-                real_embeddings=real_embeddings, 
-                gan_embeddings=gan_embeddings, 
-                distances=distances
-            )
-            print(f"Successfully saved embeddings and distance matrix to: {save_path}")
-        
-        return real_embeddings, gan_embeddings, distances
 
-    def plot_mds_embeddings(self, real_embeddings, gan_embeddings, save_plot=True):
-        """Generates a scatter plot of the MDS embeddings."""
-        print("\n--- Generating MS-SWD MDS Plot ---")
-        fig, ax = plt.subplots(figsize=(8, 8))
+        # Plot
+        figsize = figsize or (8, 8)
+        fig, ax = plt.subplots(figsize=figsize)
         
-        # Use styling similar to Figure 2 of the paper
-        ax.scatter(
-            real_embeddings[:, 0], real_embeddings[:, 1], 
-            s=30, c='#d1d1d1', marker='s', lw=0.5, ec='white', label='Real (Test) Samples'
-        )
-        ax.scatter(
-            gan_embeddings[:, 0], gan_embeddings[:, 1], 
-            s=30, c='#003f5c', marker='o', lw=0.5, ec='white', label='GAN Samples'
-        )
+        color_cycle = plt.cm.tab10.colors
+        markers = ['o', 's', '^', 'D', 'v', 'P', 'X', '*', 'h', '<']
+        
+        offset = 0
+        for idx, label in enumerate(all_labels):
+            n = cached_data[label]['distances'].shape[0]
+            color = color_cycle[idx % len(color_cycle)]
+            marker = markers[idx % len(markers)]
+            
+            ax.scatter(
+                embeddings[offset:offset+n, 0],
+                embeddings[offset:offset+n, 1],
+                s=30, c=[color], marker=marker, lw=0.5, ec='white',
+                label=f'{label} ({n} samples)'
+            )
+            offset += n
         
         ax.set_aspect('equal')
         ax.set_xlabel('Dimension 1', fontsize=12)
         ax.set_ylabel('Dimension 2', fontsize=12)
         ax.set_title('MS-SWD Multidimensional Scaling', fontsize=14, pad=15)
         
-        # Despine
         ax.spines['right'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.grid(color='#BFBFBF', alpha=0.5, linestyle='--', linewidth=0.5)
         
-        ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.15), ncol=2, frameon=False)
+        ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.15), 
+                  ncol=min(len(all_labels), 4), frameon=False)
         
         plt.tight_layout()
         
         if save_plot:
-            plot_path = os.path.join(self.output_dir, "msswd_mds_plot.png")
+            plot_path = os.path.join(self.output_dir, "msswd_mds_multi_plot.png")
             plt.savefig(plot_path, bbox_inches='tight', dpi=300)
-            print(f"Saved MDS plot to: {plot_path}")
+            print(f"Saved multi-MDS plot to: {plot_path}")
             
-        plt.show()
-
-if __name__ == "__main__":
-    # 1. Initialize
-    validator = PostProcessing(
-        output_dir='outputs/20000_training_samples',
-        real_path='datasets/training/*.npy',
-        gan_path='outputs/realizations/*.npy'
-    )
-
-    # 2. Load the Samples into self (Limiting to 10 to save RAM!)
-    validator.load_gan_samples(limit=10)
-    validatflumy(limit=10)
-
-    # 3. Call functions with explicit save/show logic
-    validator.plot_facies_percentages(show_plot=True, save_plot=False)
-    validator.connectivity_and_pattern_analysis(target_val=1)
-    validator.plot_entropy(show_plot=False, save_plot=True)
-    validator.compute_slice_metrics(axis='Z', num_slices=3)
-    validator.plot_3d_pyvista(show_plot=True, save_plot=True)
+        if show_plot:
+            plt.show()
+        
+        return fig, ax

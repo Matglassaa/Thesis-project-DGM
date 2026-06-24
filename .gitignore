@@ -30,6 +30,7 @@ wheels/
 outputs/
 datasets/
 plots/
+graphify-out/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -140,6 +141,8 @@ cython_debug/
 
 # Gemini CLI / Code Assistant
 .gemini/
+.skills/
+.agents
 
 # Marimo
 marimo/_static/

@@ -17,8 +17,7 @@ def parse_args():
     # CHANGED: Use nargs='+' to accept multiple directories
     parser.add_argument('--data_dirs', nargs='+', required=True, help='Paths to the directories with .npz/.npy files')
     parser.add_argument('--output_file', type=str, required=True, help='Path and name for the output .h5 file (e.g., dataset.h5)')
-    # NEW: Argument to specify how many samples to take from each directory
-    parser.add_argument('--samples_per_dir', type=int, default=5000, help='Number of samples to take from EACH dataset')
+    parser.add_argument('--samples_per_dir', type=int, default=10000, help='Number of samples to take from EACH dataset')
     parser.add_argument('--file_type', type=str, choices=['npz', 'npy'], default='npy', help='Type of input files (default: npy)')
     parser.add_argument('--plot_dir', type=str, default=None, help='Directory to save generated plots (default: same as output_file)')
     parser.add_argument('--num_plot_samples', type=int, default=10, help='Number of realizations to sample for the entropy plot')

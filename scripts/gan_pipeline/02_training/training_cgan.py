@@ -149,12 +149,12 @@ def main():
                             use_attention=False)
 
     optimizer_generator = partial(optim.Adam, lr=1e-3, betas=(0., 0.99))
-    optimizer_discriminator = partial(optim.Adam, lr=1e-2, betas=(0., 0.99))
+    optimizer_discriminator = partial(optim.Adam, lr=3e-3, betas=(0., 0.99))
     
     loss_generator = nn.BCEWithLogitsLoss()
     loss_discriminator = nn.BCEWithLogitsLoss()
     
-    penalty_discriminator = R1Regularization(gamma=10., num_iter=16, use_amp=True)      # Have a lower num_iter -> 
+    penalty_discriminator = R1Regularization(gamma=10., num_iter=4, use_amp=True)      # Have a lower num_iter -> 
 
     ################################################################################
     # Validation
@@ -168,13 +168,6 @@ def main():
                          batch_size=config['val_batch_size'],
                          n_gpu=config['num_gpus'])
 
-    #### COMMENT: increase n_descriptors in the MSSWD metric -> larger 3D blocks so more information to be processed!
-    # if use_one_hot:
-    #     metrics = [MSSWD(**metric_params, channel=c) for c in range(nc)]
-    # else:
-    #     ms_swd = MSSWD(**metric_params)
-    #     los = LoS(channel=0, batch_size=config['val_batch_size'], n_gpu=config['num_gpus'])
-    #     metrics = [ms_swd, los]
     if use_one_hot:
         metrics = []
         for c in range(nc):

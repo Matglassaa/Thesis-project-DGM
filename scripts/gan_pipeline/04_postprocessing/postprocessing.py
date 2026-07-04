@@ -196,12 +196,16 @@ class WellMismatch:
         return mapping[class_indices]
 
     def compute_mismatch(self):
-        """Computes the Macro F1 score for all loaded realizations against well data."""
+        """Computes the Macro and Per-Class F1 scores for all loaded realizations against well data."""
         if not self.well_coords:
             print("No well coordinates loaded. Cannot compute mismatch.")
             return None
 
         results = []
+        
+        # Define the expected facies classes (assuming 1, 2, and 3 based on your 3-facies grouping)
+        # Adjust these labels if your integers are 0, 1, 2.
+        expected_labels = [1, 2, 3] 
 
         for file_path in self.data_files:
             try:
@@ -221,12 +225,19 @@ class WellMismatch:
                         y_pred.append(grid[z, y, x])
                         y_true_valid.append(true_facies)
 
-                macro_f1 = f1_score(y_true_valid, y_pred, average="macro")
+                # Compute Macro F1 (Your original metric)
+                macro_f1 = f1_score(y_true_valid, y_pred, average="macro", zero_division=0)
+                
+                # Compute Per-Class F1 (This isolates the failing facies)
+                per_class_f1 = f1_score(y_true_valid, y_pred, average=None, labels=expected_labels, zero_division=0)
 
                 results.append(
                     {
                         "Realization": os.path.basename(file_path),
                         "Macro_F1_Score": macro_f1,
+                        "F1_Class_1_Channel": per_class_f1[0],
+                        "F1_Class_2_Levee": per_class_f1[1],
+                        "F1_Class_3_Overbank": per_class_f1[2],
                     }
                 )
 
@@ -240,6 +251,11 @@ class WellMismatch:
             print(f"\n--- Well Data Mismatch ---")
             print(f"Evaluated {len(results)} realizations.")
             print(f"Average Macro F1 Score: {mean_f1:.4f}")
+            
+            # Print average per-class performance to immediately see the weak link
+            print(f"Average F1 Class 1 (Channel): {df_results['F1_Class_1_Channel'].mean():.4f}")
+            print(f"Average F1 Class 2 (Levee): {df_results['F1_Class_2_Levee'].mean():.4f}")
+            print(f"Average F1 Class 3 (Overbank): {df_results['F1_Class_3_Overbank'].mean():.4f}")
 
         return df_results
 
@@ -249,13 +265,10 @@ class WellMismatch:
         axis="Z",
         num_slices=3,
         figsize=None,
+        show_plot=True,
         save_plot=False,
         output_dir="outputs",
     ):
-        """Groups realizations into Perfect vs Imperfect alignments, calculates spatial
-
-        entropy across slices on the fly, and plots them in a side-by-side comparison.
-        """
         if df_mismatch is None or df_mismatch.empty:
             print("Error: Provide a valid mismatch DataFrame.")
             return {}
@@ -272,13 +285,19 @@ class WellMismatch:
         sample_grid = self._load_and_map_realization(self.data_files[0])
         nz, ny, nx = sample_grid.shape
         dims = {"Z": nz, "Y": ny, "X": nx}
-
-        # 2. Select consistent slice indices across both groups
         max_slices = dims[axis]
-        num_slices = min(num_slices, max_slices)
-        slice_indices = sorted(random.sample(range(max_slices), num_slices))
 
-        # 3. Map filename strings to absolute file paths
+        # 2. Define ALL slices to get the true spatial mean across the whole volume
+        all_slice_indices = list(range(max_slices))
+
+        # 3. Calculate deterministic, evenly-spaced indices *only* for the visual plot
+        num_slices = min(num_slices, max_slices)
+        if num_slices == 1:
+            plot_slice_indices = [max_slices // 2]
+        else:
+            plot_slice_indices = np.linspace(0, max_slices - 1, num_slices, dtype=int).tolist()
+
+        # 4. Map filename strings to absolute file paths
         basename_to_path = {os.path.basename(fp): fp for fp in self.data_files}
 
         perfect_names = df_mismatch[df_mismatch["Macro_F1_Score"] == 1.0]["Realization"]
@@ -291,58 +310,61 @@ class WellMismatch:
         print(f"  Perfect Alignment Subgroup: {len(perfect_paths)} files")
         print(f"  Imperfect Alignment Subgroup: {len(imperfect_paths)} files")
 
-        # 4. Extract slices and calculate maps
-        perf_maps, perf_mean = self._extract_group_entropy(perfect_paths, axis, slice_indices, dims)
-        imperf_maps, imperf_mean = self._extract_group_entropy(imperfect_paths, axis, slice_indices, dims)
+        # 5. Extract group entropy passing ALL slice indices for accurate volume means
+        perf_maps_all, perf_mean = self._extract_group_entropy(perfect_paths, axis, all_slice_indices, dims)
+        imperf_maps_all, imperf_mean = self._extract_group_entropy(imperfect_paths, axis, all_slice_indices, dims)
 
-        # 5. Build Double Plot Layout (Row 0: Perfect, Row 1: Imperfect)
-        figsize = figsize or (5 * num_slices, 8)
-        fig, axes = plt.subplots(2, num_slices, figsize=figsize, sharex=True, sharey=True)
-        axes = np.atleast_2d(axes)  # Force 2D array structure even if num_slices=1
+        # 6. Filter down the calculated maps list to just the ones chosen for plotting
+        # (Maps are stored sequentially from slice 0 to max_slices-1 inside the returned list)
+        perf_maps = [perf_maps_all[i] for i in plot_slice_indices] if perf_maps_all is not None else None
+        imperf_maps = [imperf_maps_all[i] for i in plot_slice_indices] if imperf_maps_all is not None else None
 
-        norm = mcolors.Normalize(vmin=0, vmax=1.0)
-        xlabel, ylabel = {"Z": ("X", "Y"), "Y": ("X", "Z"), "X": ("Y", "Z")}[axis]
+        # 7. Build Double Plot Layout (Row 0: Perfect, Row 1: Imperfect)
+        if show_plot:
+            figsize = figsize or (5 * num_slices, 8)
+            fig, axes = plt.subplots(2, num_slices, figsize=figsize, sharex=True, sharey=True)
+            axes = np.atleast_2d(axes)  # Force 2D array structure even if num_slices=1
 
-        for idx, slice_val in enumerate(slice_indices):
-            # Top row: Perfect alignments
-            if perf_maps is not None:
-                im = axes[0, idx].imshow(perf_maps[idx], cmap="magma", origin="lower", norm=norm)
-                axes[0, idx].set_title(f"Perfect | {axis}-Slice {slice_val}")
-            else:
-                axes[0, idx].text(0.5, 0.5, "No Data", ha="center", va="center")
+            norm = mcolors.Normalize(vmin=0, vmax=1.0)
+            xlabel, ylabel = {"Z": ("X", "Y"), "Y": ("X", "Z"), "X": ("Y", "Z")}[axis]
 
-            # Bottom row: Imperfect alignments
-            if imperf_maps is not None:
-                im = axes[1, idx].imshow(imperf_maps[idx], cmap="magma", origin="lower", norm=norm)
-                axes[1, idx].set_title(f"Imperfect | {axis}-Slice {slice_val}")
-            else:
-                axes[1, idx].text(0.5, 0.5, "No Data", ha="center", va="center")
+            for idx, slice_val in enumerate(plot_slice_indices):
+                # Top row: Perfect alignments
+                if perf_maps is not None:
+                    im = axes[0, idx].imshow(perf_maps[idx], cmap="magma", origin="lower", norm=norm)
+                    axes[0, idx].set_title(f"Perfect | {axis}-Slice {slice_val}",fontsize=10,c='#595959')
+                else:
+                    axes[0, idx].text(0.5, 0.5, "No Data", ha="center", va="center")
 
-            # Apply labels
-            axes[0, idx].set_ylabel(ylabel)
-            axes[1, idx].set_ylabel(ylabel)
-            axes[1, idx].set_xlabel(xlabel)
+                # Bottom row: Imperfect alignments
+                if imperf_maps is not None:
+                    im = axes[1, idx].imshow(imperf_maps[idx], cmap="magma", origin="lower", norm=norm)
+                    axes[1, idx].set_title(f"Imperfect | {axis}-Slice {slice_val}",fontsize=10,c='#595959')
+                else:
+                    axes[1, idx].text(0.5, 0.5, "No Data", ha="center", va="center")
 
-        # Add shared colorbar
-        fig.subplots_adjust(right=0.88)
-        cbar_ax = fig.add_axes([0.91, 0.15, 0.02, 0.7])
-        fig.colorbar(im, cax=cbar_ax).set_label("Normalized Entropy (0 to 1)", rotation=270, labelpad=15)
+                # Apply labels
+                axes[0, idx].set_ylabel(ylabel)
+                axes[1, idx].set_ylabel(ylabel)
+                axes[1, idx].set_xlabel(xlabel)
 
-        plt.suptitle(
-            f"{self.gan_name} Alignment Comparison: {axis} Axis Normalized Spatial Entropy\n"
-            f"Global Subgroup Means -> Perfect: {perf_mean:.4f} | Imperfect: {imperf_mean:.4f}",
-            fontsize=14,
-            y=0.98,
-        )
+            # Add shared colorbar
+            fig.subplots_adjust(right=0.88)
+            cbar_ax = fig.add_axes([0.89, 0.25, 0.015, 0.5])
+            fig.colorbar(im, cax=cbar_ax).set_label("Normalized Entropy (0 to 1)", rotation=270, labelpad=15)
 
-        if save_plot:
-            os.makedirs(output_dir, exist_ok=True)
-            path = os.path.join(output_dir, f"split_entropy_{axis}_{self.gan_name}.png")
-            plt.savefig(path, bbox_inches="tight", dpi=300)
-            print(f"Saved split entropy plot to: {path}")
+            plt.suptitle(f"Perfect $H_n$: {perf_mean:.4f} | Imperfect $H_n$: {imperf_mean:.4f}",fontsize=12,y=0.93,c='#595959')
 
-        plt.show()
-        return {"perfect_mean": perf_mean, "imperfect_mean": imperf_mean}
+            if save_plot:
+                os.makedirs(output_dir, exist_ok=True)
+                path = os.path.join(output_dir, f"split_entropy_{axis}_{self.gan_name}.png")
+                plt.savefig(path, bbox_inches="tight", dpi=400)
+                print(f"Saved split entropy plot to: {path}")
+
+            plt.show()
+
+        return {"perfect_count":len(perfect_paths),"imperfect_count":len(imperfect_paths),
+                "perfect_mean": perf_mean, "imperfect_mean": imperf_mean}
 
     def _extract_group_entropy(self, file_paths, axis, slice_indices, dims):
         """Internal helper to load targeted slices on the fly and compute normalized entropy."""
@@ -398,119 +420,6 @@ class WellMismatch:
             slice_means.append(np.mean(entropy_map))
 
         return entropy_maps, np.mean(slice_means)
-
-    def plot_vpc(
-        self, num_realizations=10, figsize=None, save_plot=False, output_dir="outputs"
-    ):
-        """Calculates and plots the Vertical Proportion Curve (VPC) comparing Well vs GAN data."""
-        print(f"\n--- Generating Vertical Proportion Curves (VPC) ---")
-        if not self.well_coords:
-            print("No well data loaded. Cannot compute VPC.")
-            return
-
-        figsize = figsize or (12, 8)
-        facies_codes = self.cfg["codes"]
-        facies_colors = self.cfg["colors"]
-        facies_labels = self.cfg["names"]
-
-        max_z = 32
-
-        well_vpc = {f: np.zeros(max_z) for f in facies_codes}
-        well_counts_per_z = np.zeros(max_z)
-
-        for (z, y, x), f_val in zip(self.well_coords, self.well_true_facies):
-            if z < max_z:
-                well_vpc[f_val][z] += 1
-                well_counts_per_z[z] += 1
-
-        for f in facies_codes:
-            safe_counts = np.where(well_counts_per_z == 0, 1, well_counts_per_z)
-            well_vpc[f] = well_vpc[f] / safe_counts
-            well_vpc[f][well_counts_per_z == 0] = np.nan
-
-        gan_vpc = {f: np.zeros(max_z) for f in facies_codes}
-        files_to_process = self.data_files[:num_realizations]
-
-        print(
-            f"Processing {len(files_to_process)} {self.gan_name} realizations for global VPC..."
-        )
-        for file_path in files_to_process:
-            grid = self._load_and_map_realization(file_path)
-            z_dim, y_dim, x_dim = grid.shape
-            cells_per_slice = y_dim * x_dim
-
-            for f in facies_codes:
-                proportions = np.sum(grid == f, axis=(1, 2)) / cells_per_slice
-                gan_vpc[f] += proportions[:max_z]
-
-        for f in facies_codes:
-            gan_vpc[f] /= len(files_to_process)
-
-        fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
-        z_array = np.arange(max_z)
-
-        for f in facies_codes:
-            axes[0].plot(
-                well_vpc[f],
-                z_array,
-                color=facies_colors[f],
-                label=facies_labels[f],
-                linewidth=2.5,
-                marker="o",
-                markersize=4,
-            )
-
-        axes[0].set_title(f"{self.flumy_name} VPC (Local)", fontsize=14)
-        axes[0].set_ylabel("Depth (Z-index)", fontsize=12)
-        axes[0].set_xlabel("Proportion", fontsize=12)
-        axes[0].invert_yaxis()
-        axes[0].set_xlim(0, 1)
-        axes[0].grid(True, linestyle="--", alpha=0.7)
-
-        for f in facies_codes:
-            axes[1].plot(
-                gan_vpc[f], z_array, color=facies_colors[f], linewidth=2.5
-            )
-            axes[1].fill_betweenx(
-                z_array, 0, gan_vpc[f], color=facies_colors[f], alpha=0.1
-            )
-
-        axes[1].set_title(
-            f"{self.gan_name} VPC (Global Mean of {len(files_to_process)} samples)",
-            fontsize=14,
-        )
-        axes[1].set_xlabel("Proportion", fontsize=12)
-        axes[1].set_xlim(0, 1)
-        axes[1].grid(True, linestyle="--", alpha=0.7)
-
-        handles = [
-            plt.Line2D([0], [0], color=facies_colors[f], lw=4)
-            for f in facies_codes
-        ]
-        fig.legend(
-            handles,
-            [facies_labels[f] for f in facies_codes],
-            loc="lower center",
-            ncol=3,
-            bbox_to_anchor=(0.5, -0.05),
-            fontsize=12,
-        )
-
-        plt.suptitle(
-            f"Vertical Proportion Curve: {self.flumy_name} vs. {self.gan_name}",
-            fontsize=16,
-        )
-        plt.tight_layout()
-
-        if save_plot:
-            os.makedirs(output_dir, exist_ok=True)
-            plot_path = os.path.join(
-                output_dir, f"vpc_comparison_{num_realizations}_samples.png"
-            )
-            plt.savefig(plot_path, bbox_inches="tight", dpi=300)
-            print(f"Saved VPC plot to: {plot_path}")
-
-        plt.show()
 
     def plot_roc_curve(self, save_plot=False, output_dir="outputs"):
         """Calculates and plots a Multi-Class Ensemble ROC Curve against well data."""

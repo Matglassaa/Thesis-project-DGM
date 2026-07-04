@@ -39,57 +39,52 @@ from voxgan.networks import resnet
 # Functions
 
 class MultiChannelContextLoss(_Loss):
-    """
-    Context loss for multi-channel one-hot encoded facies.
-    Expands a mask based on distance to data points and compares against targets.
-    """
-    def __init__(self, data_indices, data_values, threshold, shape, nc, spacing=None, p=1, reduction='sum', device=None):
-        super(MultiChannelContextLoss, self).__init__(None, None, reduction)
+    def __init__(self, data_indices, data_values, threshold, shape, nc, spacing=None, p=1, device=None):
+        # We no longer need the 'reduction' argument here
+        super(MultiChannelContextLoss, self).__init__(None, None, 'mean')
         self.nc = nc
         
-        # Distance transform to create the expanded mask
+        if spacing is None:
+            spacing = (5.0, 1.0, 1.0) 
+
         dist_input = torch.ones(shape, dtype=int)
         dist_input[data_indices[0], data_indices[1], data_indices[2]] = 0
         distance, indices = distance_transform_edt(dist_input.cpu(), sampling=spacing, return_indices=True)
 
-        self._mask = 1./np.sqrt(distance + 1.)
-        self._mask[distance > threshold] = 0.
+        sigma = threshold
+        self._mask = np.exp(-(distance**2) / (2 * sigma**2))
+        self._mask[distance > (3 * sigma)] = 0.
         self._mask = torch.tensor(self._mask, device=device).float()
 
-        # Build one-hot targets for the whole volume
-        self._target = torch.empty((nc, *shape), device=device)
-        
-        # Convert class IDs to one-hot values in [-1, 1] range (matching Tanh output)
-        one_hot_vals = np.full((len(data_values), nc), -1.0)
-        for i, v in enumerate(data_values):
-            one_hot_vals[i, int(v)] = 1.0
+        self._target = torch.empty((nc, *shape), device=device)        
+        num_points = data_values.size(0)
+
+        one_hot_vals = torch.full((num_points, nc), -1.0, device=device)
+        one_hot_vals[torch.arange(num_points), data_values.long()] = 1.0
             
         for c in range(nc):
-            chan_target = torch.empty(shape, device=device)
-            chan_target[data_indices[0], data_indices[1], data_indices[2]] = torch.tensor(one_hot_vals[:, c], device=device).float()
-            # Spread the values from the nearest data point
+            chan_target = torch.zeros(shape, device=device)
+            chan_target[data_indices[0], data_indices[1], data_indices[2]] = one_hot_vals[:, c].float()
             self._target[c] = chan_target[indices[0], indices[1], indices[2]]
 
         self._p = torch.abs if p == 1 else partial(torch.pow, exponent=p)
 
-        if reduction == 'mean':
-            self.reduction = partial(torch.mean, dim=(1, 2, 3, 4))
-        elif reduction == 'sum':
-            self.reduction = partial(torch.sum, dim=(1, 2, 3, 4))
-        else:
-            self.reduction = lambda x: x
-
     def forward(self, input):
-        # input: (B, C, Z, Y, X)
-        # Broadcasting: diff is (B, C, Z, Y, X)
-        diff = self._p(self._mask * (input - self._target))
-        return self.reduction(diff)
+        # input: (B, C, Z, Y, X), self._target: (C, Z, Y, X)
+        diff = self._p(input - self._target)
+        masked_diff = self._mask * diff
+        
+        mask_sum = torch.sum(self._mask)
+        if mask_sum > 0:
+            return torch.sum(masked_diff) / mask_sum
+        else:
+            return torch.sum(masked_diff)
 
 def map_facies(val):
-    """Maps raw facies values to 3 classes as defined in dataloader."""
-    if 1 <= val <= 3: return 0
-    if 4 <= val <= 7: return 1
-    if 8 <= val <= 12: return 2
+    """Maps raw facies values to 3 classes (0=Channel, 1=Levee, 2=Overbank)."""
+    if val == 1: return 0  # Maps to Channel
+    if val == 2: return 1  # Maps to Levee
+    if val == 3: return 2  # Maps to Overbank
     return 0 # Default fallback
 
 def main():
@@ -234,6 +229,7 @@ def main():
             l_prior = loss_fn_prior(proba['data'], label_real.expand_as(proba['data']))
             
             loss = l_context + 10.0 * l_prior
+            #loss = 10.0 * l_context + 1.0 * l_prior
             
             loss.backward()
             optimizer.step()

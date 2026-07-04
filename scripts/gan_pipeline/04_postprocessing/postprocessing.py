@@ -667,7 +667,9 @@ class PostProcessing:
         """
         if target_facies is None:
             target_facies = self.cfg['codes']
-        if not data_list: return [0.0] * len(target_facies)
+        if not data_list: 
+            return [0.0] * len(target_facies)
+            
         counts = {f: 0 for f in target_facies}
         total_voxels = sum(arr.size for arr in data_list)
         
@@ -677,18 +679,20 @@ class PostProcessing:
                 
         return [counts[f] / total_voxels for f in target_facies]
 
-    def _calculate_h_max(self, proportions):
-        """Calculates the theoretical maximum Shannon entropy for a given global distribution.
+    def _calculate_h_max(self, proportions=None):
+        """Calculates the absolute theoretical maximum Shannon entropy for the categorical system.
+
+        This baseline changes the reference from sample distribution uncertainty to the absolute
+        upper bound defined by the number of classes, ensuring rigorous bounded normalization.
 
         Args:
-            proportions (list): List of global probabilities for each facies class.
+            proportions (list, optional): Deprecated parameter kept for signature compatibility.
+                Defaults to None.
 
         Returns:
-            float: Theoretical maximum entropy in bits.
+            float: Theoretical maximum entropy in bits (log2 of the number of classes).
         """
-        probs = np.array(proportions)
-        probs = probs[probs > 0]
-        return -np.sum(probs * np.log2(probs))
+        return float(np.log2(self.num_classes))
 
     def _create_colormap_and_legend(self):
         """Creates a ListedColormap and legend patches from the centralized facies config.
@@ -705,7 +709,15 @@ class PostProcessing:
         return custom_cmap, legend_patches
 
     def get_pattern_counts(self, data_array, template_size=(3, 3, 3)):
-        """Extracts and counts Multiple Point Statistics (MPS) patterns via sliding window."""
+        """Extracts and counts Multiple Point Statistics (MPS) patterns via sliding window.
+
+        Args:
+            data_array (numpy.ndarray): 3D geological grid sample.
+            template_size (tuple, optional): Spatial dimensions of the window. Defaults to (3, 3, 3).
+
+        Returns:
+            tuple: (numpy.ndarray of unique patterns, numpy.ndarray of corresponding patch counts).
+        """
         windows = view_as_windows(data_array, template_size)
         n_patches = np.prod(windows.shape[:3])
         patch_size = np.prod(template_size)
@@ -713,29 +725,38 @@ class PostProcessing:
         return np.unique(flat_windows, axis=0, return_counts=True)
 
     def analyze_connectivity(self, data_array, target_facies):
-        """Calculates 3D structural connectivity sizes for a specific facies."""
+        """Calculates 3D structural connectivity sizes for a specific facies.
+
+        Args:
+            data_array (numpy.ndarray): 3D volume grid to label.
+            target_facies (int): Voxel code specifying the depositional body to isolate.
+
+        Returns:
+            list: Integers representing the size in voxels of every isolated 3D cluster body.
+        """
         binary_mask = (data_array == target_facies).astype(int)
         structure = np.ones((3, 3, 3)) 
         labeled_array, _ = label(binary_mask, structure=structure)
         unique_ids, blob_sizes = np.unique(labeled_array, return_counts=True)
-        return blob_sizes[1:].tolist() # Return as list for easy extension
+        return blob_sizes[1:].tolist()
 
     def _plot_pattern_distributions(self, facies_list, flumy_patterns, gan_patterns):
-        """Generates 2D scatter plots comparing pattern frequencies per facies."""
+        """Generates 2D scatter plots comparing pattern frequencies per facies.
+
+        Args:
+            facies_list (list): Active geological facies codes to process.
+            flumy_patterns (Counter): Cached counts of reference baseline structural patterns.
+            gan_patterns (Counter): Cached counts of generated model structural patterns.
+        """
         print("\n--- Generating 2D Pattern Distribution Plots ---")
         
-        # Identify the center index of the flat pattern template to determine its facies
-        # For a 3x3x3 template (27 elements), the center is index 13
         for f_val in facies_list:
-            # Filter patterns belonging to this specific facies center
             f_flumy = {p: c for p, c in flumy_patterns.items() if p[len(p)//2] == f_val}
             f_gan = {p: c for p, c in gan_patterns.items() if p[len(p)//2] == f_val}
             
-            # Total counts for frequency normalization
             total_flumy = sum(f_flumy.values()) if f_flumy else 1
             total_gan = sum(f_gan.values()) if f_gan else 1
             
-            # Combine all unique patterns found in either dataset for this facies
             all_patterns = set(f_flumy.keys()).union(set(f_gan.keys()))
             
             flumy_freqs = []
@@ -744,11 +765,9 @@ class PostProcessing:
                 flumy_freqs.append(f_flumy.get(p, 0) / total_flumy)
                 gan_freqs.append(f_gan.get(p, 0) / total_gan)
                 
-            # Plotting
             plt.figure(figsize=(6, 5))
             plt.scatter(flumy_freqs, gan_freqs, alpha=0.6, color='teal', edgecolor='k', s=25)
             
-            # Reference 1:1 line
             max_val = max(max(flumy_freqs, default=0), max(gan_freqs, default=0))
             plt.plot([0, max_val], [0, max_val], 'r--', label='Perfect Alignment')
             
@@ -761,7 +780,17 @@ class PostProcessing:
             plt.show()
 
     def connectivity_and_pattern_analysis(self, facies_list=None, sample_limit=10, recompute_flumy=False, plot=True):
-        """Executes MPS and Connectivity comparisons for ALL facies using loaded data."""
+        """Executes MPS and Connectivity comparisons for ALL facies using loaded data.
+
+        Args:
+            facies_list (list, optional): Mapped facies array filters. Defaults to None.
+            sample_limit (int, optional): Evaluation count limits for RAM protection. Defaults to 10.
+            recompute_flumy (bool, optional): Force cache bypass. Defaults to False.
+            plot (bool, optional): Enable chart renderings. Defaults to True.
+
+        Returns:
+            tuple: (pandas.DataFrame of metrics summary, dict containing raw structural outputs).
+        """
         if facies_list is None:
             facies_list = self.cfg['codes']
 
@@ -775,7 +804,6 @@ class PostProcessing:
         flumy_pattern_counter = Counter()
         all_flumy_blobs = defaultdict(list)
 
-        # Check if BOTH summary CSV and raw data PKL exist
         if not recompute_flumy and os.path.exists(baseline_csv_path) and os.path.exists(baseline_pkl_path):
             print(f"\n--- Loading pre-computed {self.flumy_name} metrics from cache ---")
             df_baseline = pd.read_csv(baseline_csv_path)
@@ -823,11 +851,9 @@ class PostProcessing:
                 row.update(stats)
                 baseline_rows.append(row)
                 
-            # Save summaries and raw data
             pd.DataFrame(baseline_rows).to_csv(baseline_csv_path, index=False)
             with open(baseline_pkl_path, 'wb') as f:
                 pickle.dump({'blobs': all_flumy_blobs, 'patterns': flumy_pattern_counter}, f)
-            print(f"Saved cached baseline to disk.")
 
         print(f"\n--- Computing {self.gan_name} metrics for {limit_str} samples ---")
         if getattr(self, 'gan_data', None) is None or len(self.gan_data) == 0:
@@ -865,18 +891,15 @@ class PostProcessing:
         df_stats['GAN_Mean'] = df_stats['GAN_Mean'].round(2)
         df_stats.to_csv(gan_csv_path, index=False)
 
-        # Print outputs
         print("\n" + "="*50 + "\n MULTIPLE POINT STATISTICS (MPS)\n" + "="*50)
         print(f"Total unique patterns ({self.flumy_name}): {total_flumy_patterns}")
         print(f"Total unique patterns ({self.gan_name}): {len(gan_pattern_counter)}")
         print("\n" + "="*50 + "\n MACRO-CONNECTIVITY STATISTICS\n" + "="*50)
         print(df_stats.to_string(index=False))
 
-        # Handle plotting within the current run context
         if plot:
             self._plot_pattern_distributions(facies_list, flumy_pattern_counter, gan_pattern_counter)
 
-        # Packed dictionary contains everything needed for cross-run visualizations
         raw_run_data = {
             'flumy_blobs': dict(all_flumy_blobs),
             'gan_blobs': dict(all_gan_blobs),
@@ -891,12 +914,9 @@ class PostProcessing:
 
         Args:
             mode (str, optional): Target to evaluate ('gan', 'flumy', or 'both'). Defaults to 'gan'.
-            figsize (tuple, optional): Figure size as (width, height) in inches. Defaults to (10, 6).
-            show_plot (bool, optional): If True, displays the plot interactively. Defaults to True.
-            save_plot (bool, optional): If True, saves the plot to the output directory. Defaults to False.
-
-        Raises:
-            ValueError: If an invalid mode is provided.
+            figsize (tuple, optional): Figure size dimensions. Defaults to (10, 6).
+            show_plot (bool, optional): Render execution outputs. Defaults to True.
+            save_plot (bool, optional): Save image files. Defaults to False.
         """
         valid_modes = ['gan', 'flumy', 'both']
         if mode not in valid_modes:
@@ -969,191 +989,123 @@ class PostProcessing:
             filename = f"facies_distribution_{mode}.png"
             plot_path = os.path.join(self.output_dir, filename)
             plt.savefig(plot_path, bbox_inches='tight', dpi=300)
-            print(f"Saved {mode} plot to: {plot_path}")
             
-        if show_plot: plt.show()
-        else: plt.close(fig)
+        if show_plot: 
+            plt.show()
+        else: 
+            plt.close(fig)
 
-    def plot_entropy(self, data_source='gan', axis=None, num_slices=9, figsize=None, plot_title=True, show_plot=True, save_plot=False):
-        """Calculates and plots cell-wise normalized spatial entropy across the dataset.
+    def _compute_ensemble_entropy_map(self, data_list):
+        """Computes voxel-wise Shannon entropy across an ensemble, normalized by absolute class limits.
+
+        Ensures values are rigidly bounded to a [0.0, 1.0] scale by dividing by log2(K).
 
         Args:
-            data_source (str, optional): Target to evaluate ('gan' or 'flumy'). Defaults to 'gan'.
-            axis (str, optional): Axis to slice ('X', 'Y', 'Z'). If None, processes all. Defaults to None.
-            num_slices (int, optional): Slices to plot per axis. Defaults to 9.
-            figsize (tuple, optional): Figure size as (width, height) in inches. Passed to subplot helper.
-                If None, auto-computed based on num_slices.
-            plot_title (bool, optional): If True, displays a suptitle. Defaults to True.
-            show_plot (bool, optional): If True, displays the plot interactively. Defaults to True.
-            save_plot (bool, optional): If True, saves the plot to the output directory. Defaults to False.
+            data_list (list): List of 3D numpy arrays containing geological data arrays.
 
-        Raises:
-            ValueError: If input arguments do not match expected constraints.
+        Returns:
+            numpy.ndarray: 3D spatial array mapping coordinate uncertainty from 0.0 to 1.0.
         """
-        valid_sources = ['gan', 'flumy']
-        if data_source not in valid_sources:
-            raise ValueError(f"Invalid data_source '{data_source}'. Choose from {valid_sources}.")
+        num_realizations = len(data_list)
+        if num_realizations == 0:
+            return None
             
-        if axis:
-            axis = axis.upper()
-            if axis not in ['X', 'Y', 'Z']:
-                raise ValueError("axis must be 'X', 'Y', 'Z', or None.")
-        
-        if data_source == 'gan' and not self.gan_data:
-            self.load_gan_samples()
-        
-        # Flumy data is always needed to compute the baseline H_max
-        if not self.flumy_samples:
-            self.load_flumy_samples()
-            
-        target_data = self.gan_data if data_source == 'gan' else self.flumy_samples
-        num_total = len(target_data)
-        axes_to_plot = [axis] if axis else ['Z', 'Y', 'X']
-
-        flumy_global_probs = self._get_global_proportions(self.flumy_samples)
-        h_max = self._calculate_h_max(flumy_global_probs) * 1.3
-        
-        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
-        print(f"\n--- Generating {display_name} Normalized Entropy Matrices ---")
-        print(f"{self.flumy_name} Baseline Proportions: {[round(p, 4) for p in flumy_global_probs]}")
-        print(f"Target Baseline H_max:  {h_max:.4f} bits")
-
-        nz, ny, nx = target_data[0].shape
-        dims = {'Z': nz, 'Y': ny, 'X': nx}
-        slices_dict = {ax: sorted(random.sample(range(dims[ax]), num_slices)) for ax in axes_to_plot}
-
-        stacks = {}
-        if 'Z' in axes_to_plot: stacks['Z'] = np.zeros((num_total, num_slices, ny, nx), dtype=np.uint8) 
-        if 'Y' in axes_to_plot: stacks['Y'] = np.zeros((num_total, num_slices, nz, nx), dtype=np.uint8) 
-        if 'X' in axes_to_plot: stacks['X'] = np.zeros((num_total, num_slices, nz, ny), dtype=np.uint8) 
-
-        for i, data_3d in enumerate(target_data):
-            if 'Z' in stacks: stacks['Z'][i] = data_3d[slices_dict['Z'], :, :]
-            if 'Y' in stacks: stacks['Y'][i] = data_3d[:, slices_dict['Y'], :].swapaxes(0, 1)
-            if 'X' in stacks: stacks['X'][i] = data_3d[:, :, slices_dict['X']].transpose(2, 0, 1)
-
-        if 'Z' in stacks: self._plot_entropy_helper(stacks['Z'], slices_dict['Z'], 'Z', 'X', 'Y', data_source, h_max, figsize, plot_title, show_plot, save_plot)
-        if 'Y' in stacks: self._plot_entropy_helper(stacks['Y'], slices_dict['Y'], 'Y', 'X', 'Z', data_source, h_max, figsize, plot_title, show_plot, save_plot)
-        if 'X' in stacks: self._plot_entropy_helper(stacks['X'], slices_dict['X'], 'X', 'Y', 'Z', data_source, h_max, figsize, plot_title, show_plot, save_plot)
-    
-    def plot_3d_entropy_pyvista(self, data_source='gan', figsize=None, show_plot=True, save_plot=True):
-        """Computes full ensemble cell-wise normalized spatial entropy and renders it
-
-        as a 3D continuous volumetric grid with identical scaling and perspective.
-        """
-        valid_sources = ['gan', 'flumy']
-        if data_source not in valid_sources:
-            raise ValueError(f"Invalid data_source '{data_source}'. Choose from {valid_sources}.")
-            
-        try:
-            import pyvista as pv
-            from scipy.stats import entropy
-            pv.set_jupyter_backend('static') 
-        except ImportError:
-            print("Error: 'pyvista' or 'scipy' is not installed. Skipping 3D entropy plot.")
-            return
-
-        # 1. Gather ensemble data
-        if data_source == 'gan' and not self.gan_data:
-            self.load_gan_samples()
-        if not self.flumy_samples:
-            self.load_flumy_samples()
-            
-        target_data = self.gan_data if data_source == 'gan' else self.flumy_samples
-        num_realizations = len(target_data)
-        
-        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
-        print(f"\n--- Generating 3D PyVista Entropy Map ({display_name}) ---")
-
-        # 2. Compute h_max normalization factor exactly like the 2D version
-        flumy_global_probs = self._get_global_proportions(self.flumy_samples)
-        h_max = self._calculate_h_max(flumy_global_probs) * 1.3
-
-        # 3. Compute cell-wise probabilities across the ensemble
-        nz, ny, nx = target_data[0].shape
+        nz, ny, nx = data_list[0].shape
         facies_values = self.cfg['codes']
         
         probs = np.zeros((len(facies_values), nz, ny, nx))
+        ensemble_stack = np.stack(data_list, axis=0)
+        
         for i, f_val in enumerate(facies_values):
-            # Stack realizations along a new axis and count occurrences
-            ensemble_stack = np.stack(target_data, axis=0)
             probs[i] = np.sum(ensemble_stack == f_val, axis=0) / num_realizations
 
-        # 4. Calculate and normalize Shannon Entropy cell-by-cell
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            entropy_map = entropy(probs, base=2, axis=0)
-            if h_max > 0:
-                entropy_map = entropy_map / h_max
+            raw_entropy = entropy(probs, base=2, axis=0)
+            
+        h_max = np.log2(self.num_classes)
+        return raw_entropy / h_max
+    
+    def get_baseline_entropy_metrics(self):
+        """Extracts the spatial baseline entropy matrix and global mean directly from loaded reference arrays.
 
-        # 5. Build the identical PyVista Grid structure
-        grid = pv.ImageData()
-        grid.dimensions = (nx + 1, ny + 1, nz + 1)
-        # Use the exact same transposition sequence to guarantee 1:1 physical layout matching
-        grid.cell_data['Entropy'] = entropy_map.transpose(2, 1, 0).flatten(order='F')
-
-        # 6. Apply identical wide window settings
-        base_width = 800
-        base_height = 500
-        scale_factor = 2
-        window_size = figsize if figsize else (base_width, base_height)
-
-        plotter = pv.Plotter(
-            shape=(1, 1), 
-            image_scale=scale_factor, 
-            off_screen=save_plot and not show_plot, 
-            window_size=window_size
-        )
-        
-        plotter.enable_anti_aliasing('msaa') 
-
-        # 7. Add continuous volume mesh using the 'magma' color palette
-        plotter.add_mesh(
-            grid, 
-            scalars='Entropy',
-            cmap='magma', 
-            clim=[0.0, 1.0],  # Fixed normalized scale matching your 2D limits
-            show_edges=False, 
-            ambient=0.3,
-            diffuse=0.7,
-            show_scalar_bar=False
-        )
-
-        # 8. Apply the exact same structural perspective and cropping steps
-        plotter.view_isometric()
-        plotter.camera.elevation -= 15  # Identical lowered camera angle
-        plotter.reset_camera()          # Form-fitting edge alignment
-        plotter.camera.zoom(1.5)        # Tight cropping modification
-
-        # 9. Output management
-        plot_path = os.path.join(self.output_dir, f"3d_plot_{data_source}_ensemble_entropy.png")
-        
-        if save_plot:
-            plotter.show(screenshot=plot_path)
-            print(f"Saved 3D Entropy Map to: {plot_path}") 
-        elif show_plot:
-            plotter.show()
-        else:
-            plotter.close()
-
-    def _plot_entropy_helper(self, slices_stack, slice_indices, axis_name, xlabel, ylabel, data_source, h_max, figsize, plot_title, show_plot, save_plot):
-        """Internal helper to compute, format, and render normalized entropy charts.
+        Returns:
+            tuple: (3D numpy.ndarray of normalized testing baseline entropy, float mean scalar value).
+        """
+        if not self.flumy_samples:
+            self.load_flumy_samples(limit=None)
+            
+        entropy_map = self._compute_ensemble_entropy_map(self.flumy_samples)
+        mean_entropy = np.mean(entropy_map) if entropy_map is not None else 0.0
+        return entropy_map, mean_entropy
+    
+    def plot_entropy(self, data_source='gan', axis=None, num_slices=9, figsize=None, plot_title=True, show_plot=True, save_plot=False):
+        """Calculates and plots cell-wise normalized spatial entropy profiles sliced across a targeted axis.
 
         Args:
-            slices_stack (numpy.ndarray): Stacked 2D cross-sections across all realizations.
-            slice_indices (list): Integer indices indicating absolute slice depth in the 3D grid.
-            axis_name (str): Label of the slicing axis ('X', 'Y', or 'Z').
-            xlabel (str): Label for the horizontal axis of the output plot.
-            ylabel (str): Label for the vertical axis of the output plot.
-            data_source (str): Identifier string ('gan' or 'flumy') for title formatting.
-            h_max (float): The theoretical maximum entropy (bits) for normalization.
-            figsize (tuple or None): Figure size as (width, height). If None, auto-computed.
-            plot_title (bool): Display suptitle if True.
-            show_plot (bool): Display plot interactively if True.
-            save_plot (bool): Save plot to output directory if True.
+            data_source (str, optional): Target to evaluate ('gan' or 'flumy'). Defaults to 'gan'.
+            axis (str, optional): Cross-section slicing filter ('X', 'Y', 'Z'). Defaults to None.
+            num_slices (int, optional): Number of visual layouts profiles. Defaults to 9.
+            figsize (tuple, optional): Dimensions for subplots. Defaults to None.
+            plot_title (bool, optional): Enable suptitles. Defaults to True.
+            show_plot (bool, optional): Interactive plotting. Defaults to True.
+            save_plot (bool, optional): Disk saving options. Defaults to False.
         """
-        num_realizations, n_slices, dim_y, dim_x = slices_stack.shape
-        facies_values = self.cfg['codes']
+        valid_sources = ['gan', 'flumy']
+        if data_source not in valid_sources:
+            raise ValueError(f"Invalid data_source '{data_source}'. Choose from {valid_sources}.")
+            
+        if axis and axis.upper() not in ['X', 'Y', 'Z']:
+            raise ValueError("axis must be 'X', 'Y', 'Z', or None.")
+        
+        axis = axis.upper() if axis else None
+        
+        # Check if target data list is empty and load samples if necessary
+        if data_source == 'gan':
+            if not getattr(self, 'gan_data', None) or len(self.gan_data) == 0:
+                self.load_gan_samples()
+            target_data = self.gan_data
+        else:
+            if not getattr(self, 'flumy_samples', None) or len(self.flumy_samples) == 0:
+                self.load_flumy_samples(limit=None)  # Load all available files for a robust baseline
+            target_data = self.flumy_samples
+            
+        axes_to_plot = [axis] if axis else ['Z', 'Y', 'X']
+
+        h_max = np.log2(self.num_classes)
+        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
+        print(f"\n--- Generating {display_name} Normalized Entropy Matrices ---")
+        print(f"Theoretical Absolute Max Upper Bound (H_max): {h_max:.4f} bits")
+
+        entropy_tensor = self._compute_ensemble_entropy_map(target_data)
+        nz, ny, nx = entropy_tensor.shape
+
+        dims = {'Z': nz, 'Y': ny, 'X': nx}
+        slices_dict = {ax: sorted(random.sample(range(dims[ax]), num_slices)) for ax in axes_to_plot}
+
+        if 'Z' in axes_to_plot: 
+            self._plot_precomputed_entropy_helper(entropy_tensor, slices_dict['Z'], 'Z', 'X', 'Y', data_source, figsize, plot_title, show_plot, save_plot)
+        if 'Y' in axes_to_plot: 
+            self._plot_precomputed_entropy_helper(entropy_tensor, slices_dict['Y'], 'Y', 'X', 'Z', data_source, figsize, plot_title, show_plot, save_plot)
+        if 'X' in axes_to_plot: 
+            self._plot_precomputed_entropy_helper(entropy_tensor, slices_dict['X'], 'X', 'Y', 'Z', data_source, figsize, plot_title, show_plot, save_plot)
+
+    def _plot_precomputed_entropy_helper(self, entropy_tensor, slice_indices, axis_name, xlabel, ylabel, data_source, figsize, plot_title, show_plot, save_plot):
+        """Internal plotting module mapping array cross-sections cleanly to a fixed 0.0 - 1.0 limit.
+
+        Args:
+            entropy_tensor (numpy.ndarray): Fully pre-normalized continuous 3D spatial field.
+            slice_indices (list): Index grid selections.
+            axis_name (str): Slicing coordinate plane label.
+            xlabel (str): Horizontal plot text.
+            ylabel (str): Vertical plot text.
+            data_source (str): Target group identifier.
+            figsize (tuple): Dimensions configurations.
+            plot_title (bool): Context header labels configurations.
+            show_plot (bool): Visualization rendering options.
+            save_plot (bool): Disk storage saving configurations.
+        """
+        n_slices = len(slice_indices)
         norm = mcolors.Normalize(vmin=0, vmax=1.0) 
 
         if figsize:
@@ -1172,22 +1124,19 @@ class PostProcessing:
         axes_list = np.atleast_1d(axes).flatten()
 
         for idx, slice_val in enumerate(slice_indices):
-            probs = np.zeros((len(facies_values), dim_y, dim_x))
-            for i, f_val in enumerate(facies_values):
-                probs[i] = np.sum(slices_stack[:, idx, :, :] == f_val, axis=0) / num_realizations
-            
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                entropy_map = entropy(probs, base=2, axis=0)
-                if h_max > 0:
-                    entropy_map = entropy_map / h_max
-                
-            im = axes_list[idx].imshow(entropy_map, cmap='magma', origin='lower', norm=norm)
+            if axis_name == 'Z':
+                slice_data = entropy_tensor[slice_val, :, :]
+            elif axis_name == 'Y':
+                slice_data = entropy_tensor[:, slice_val, :]
+            else:
+                slice_data = entropy_tensor[:, :, slice_val]
+
+            im = axes_list[idx].imshow(slice_data, cmap='magma', origin='lower', norm=norm)
             axes_list[idx].set_title(f"{axis_name}-Slice = {slice_val}")
             
             ncols_actual = min(n_slices, 4) if n_slices > 3 else n_slices
             if idx % ncols_actual == 0:
-                axes_list[idx].set_ylabel(ylabel)
+                bytes_label = axes_list[idx].set_ylabel(ylabel)
             nrows_actual = math.ceil(n_slices / ncols_actual)
             if idx >= (nrows_actual - 1) * ncols_actual:
                 axes_list[idx].set_xlabel(xlabel)
@@ -1197,20 +1146,94 @@ class PostProcessing:
 
         fig.subplots_adjust(right=0.88)
         cbar_ax = fig.add_axes([0.90, 0.15, 0.02, 0.7])
-        fig.colorbar(im, cax=cbar_ax).set_label('Normalized Entropy (0 to 1)', rotation=270, labelpad=15)
+        fig.colorbar(im, cax=cbar_ax).set_label('Absolute Mapped Bounded Entropy (0 to 1)', rotation=270, labelpad=15)
         
         plane = {'Z': 'XY', 'Y': 'ZX', 'X': 'ZY'}[axis_name]
         display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
         if plot_title:
-            plt.suptitle(f"{display_name}: {plane} Plane Normalized Cell-Wise Entropy ({num_realizations} Realizations)", fontsize=16)
+            plt.suptitle(f"{display_name}: {plane} Plane Rigorous Normalized Cell-Wise Entropy", fontsize=16)
 
         if save_plot:
-            path = os.path.join(self.output_dir, f"norm_entropy_{data_source}_{plane}_{num_realizations}_samples_{n_slices}_slices.png")
+            path = os.path.join(self.output_dir, f"norm_entropy_{data_source}_{plane}_{n_slices}_slices.png")
             plt.savefig(path, bbox_inches='tight', dpi=600)
-            print(f"Saved normalized entropy plot to: {path}")
             
-        if show_plot: plt.show()
-        else: plt.close(fig)
+        if show_plot: 
+            plt.show()
+        else: 
+            plt.close(fig)
+
+    def plot_3d_entropy_pyvista(self, data_source='gan', figsize=None, show_plot=True, save_plot=True):
+        """Renders a 3D volumetric field of full continuous coordinates uncertainty bounded at [0.0, 1.0].
+
+        This function always computes and displays the global mean voxel-wise entropy of the ensemble.
+
+        Args:
+            data_source (str, optional): Target sample ensemble evaluation group. Defaults to 'gan'.
+            figsize (tuple, optional): Dimensions in pixels for the window layout. Defaults to None.
+            show_plot (bool, optional): Interactive plotting execution. Defaults to True.
+            save_plot (bool, optional): Screenshot file compression storage options. Defaults to True.
+        """
+        valid_sources = ['gan', 'flumy']
+        if data_source not in valid_sources:
+            raise ValueError(f"Invalid data_source '{data_source}'. Choose from {valid_sources}.")
+            
+        try:
+            import pyvista as pv
+            pv.set_jupyter_backend('static') 
+        except ImportError:
+            print("Error: PyVista visualization module skipped.")
+            return
+
+        if data_source == 'gan':
+            if not getattr(self, 'gan_data', None) or len(self.gan_data) == 0:
+                self.load_gan_samples()
+            target_data = self.gan_data
+        else:
+            if not getattr(self, 'flumy_samples', None) or len(self.flumy_samples) == 0:
+                self.load_flumy_samples(limit=None)
+            target_data = self.flumy_samples
+            
+        display_name = self.flumy_name if data_source == 'flumy' else self.gan_name
+        print(f"\n--- Generating 3D PyVista Entropy Map ({display_name}) ---")
+
+        entropy_map = self._compute_ensemble_entropy_map(target_data)
+        
+        # Compute and report the overall mean voxel-wise entropy of the 3D domain
+        mean_voxel_entropy = float(np.mean(entropy_map))
+        print(f"[{display_name}] Calculated Mean Voxel-Wise Entropy: {mean_voxel_entropy:.4f}")
+
+        nz, ny, nx = entropy_map.shape
+        grid = pv.ImageData()
+        grid.dimensions = (nx + 1, ny + 1, nz + 1)
+        grid.cell_data['Entropy'] = entropy_map.transpose(2, 1, 0).flatten(order='F')
+
+        window_size = figsize if figsize else (800, 500)
+        plotter = pv.Plotter(off_screen=save_plot and not show_plot, window_size=window_size)
+        plotter.enable_anti_aliasing('msaa') 
+
+        plotter.add_mesh(
+            grid, 
+            scalars='Entropy',
+            cmap='magma', 
+            clim=[0.0, 1.0],  
+            show_edges=False, 
+            ambient=0.3,
+            diffuse=0.7,
+            show_scalar_bar=False
+        )
+
+        plotter.view_isometric()
+        plotter.camera.elevation -= 15  
+        plotter.reset_camera()          
+        plotter.camera.zoom(1.5)        
+
+        plot_path = os.path.join(self.output_dir, f"3d_plot_{data_source}_ensemble_entropy.png")
+        if save_plot:
+            plotter.show(screenshot=plot_path)
+        elif show_plot:
+            plotter.show()
+        else:
+            plotter.close()
 
     def compute_spatial_delentropy(self, data_array):
         """Calculates the 3D spatial Delentropy of a single geological volume.
@@ -1339,79 +1362,59 @@ class PostProcessing:
 
 
     def compute_slice_metrics(self, axis='Z', plot=False):
-        """Computes slice-wise aggregate scalar metrics comparing GAN to Flumy distributions.
-        
-        Evaluates Mean Normalized Entropy and Jensen-Shannon Divergence (JSD) 
-        across EVERY slice in the specified axis.
+        """Computes aggregate scalar profiles along an axis comparing the GAN directly to the true baseline.
+
+        Provides exact comparison matrices mapping spatial Divergence alongside model vs reference
+        variability ratios.
 
         Args:
-            axis (str, optional): Target axis to slice ('X', 'Y', 'Z'). Defaults to 'Z'.
-            plot (bool, optional): If True, displays a distribution plot of the metrics.
+            axis (str, optional): Cross-section slicing filter ('X', 'Y', 'Z'). Defaults to 'Z'.
+            plot (bool, optional): Visual chart renderings configurations. Defaults to False.
 
         Returns:
-            tuple: 
-                - pandas.DataFrame: Contains Slice Index, Flumy/GAN Entropy, and JSD for ALL slices.
-                - dict: Mean and Standard Deviation for Entropy and JSD across the axis.
+            tuple: (pandas.DataFrame matching all individual slices data, dict of global summary metrics).
         """
-        if not self.gan_data: self.load_gan_samples()
-        if not self.flumy_samples: self.load_flumy_samples()
+        if not self.gan_data: 
+            self.load_gan_samples()
+        if not self.flumy_samples: 
+            self.load_flumy_samples()
 
-        display_name = self.gan_name
-        print(f"\n--- Computing Scalar Metrics {display_name} for ALL {axis}-Axis Slices ---")
-        
-        flumy_global_probs = self._get_global_proportions(self.flumy_samples)
-        h_max = self._calculate_h_max(flumy_global_probs)
+        print(f"\n--- Computing Scalar Metrics comparing {self.gan_name} to Baseline across {axis}-Axis ---")
         
         facies_values = self.cfg['codes']
-        num_flumy_samples = len(self.flumy_samples)
         num_gan_samples = len(self.gan_data)
+        num_flumy_samples = len(self.flumy_samples)
         
-        # 1. Stack all samples into 4D arrays: (Samples, Z, Y, X)
-        # Note: Depending on your data loading, you might want to wrap this in a memory check
-        # if your ensembles are extremely large.
-        flumy_vol = np.array(self.flumy_samples) 
-        gan_vol = np.array(self.gan_data)
-        
-        nz, ny, nx = flumy_vol.shape[1:]
-        dims = {'Z': nz, 'Y': ny, 'X': nx}
-        num_slices = dims[axis]
-        
-        # 2. Compute 4D probability tensors: (Facies, Z, Y, X)
+        entropy_flumy_3d = self._compute_ensemble_entropy_map(self.flumy_samples)
+        entropy_gan_3d = self._compute_ensemble_entropy_map(self.gan_data)
+        nz, ny, nx = entropy_flumy_3d.shape
+
         p_flumy = np.zeros((len(facies_values), nz, ny, nx))
         p_gan = np.zeros((len(facies_values), nz, ny, nx))
         
+        flumy_vol = np.array(self.flumy_samples)
+        gan_vol = np.array(self.gan_data)
+        
         for i, f_val in enumerate(facies_values):
             p_flumy[i] = np.sum(flumy_vol == f_val, axis=0) / num_flumy_samples
-            p_gan[i]   = np.sum(gan_vol == f_val, axis=0) / num_gan_samples
+            p_gan[i] = np.sum(gan_vol == f_val, axis=0) / num_gan_samples
             
-        # 3. Calculate 3D Voxel-wise Metrics: (Z, Y, X)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            
-            entropy_flumy_3d = entropy(p_flumy, base=2, axis=0)
-            entropy_gan_3d = entropy(p_gan, base=2, axis=0)
-            
-            if h_max > 0:
-                entropy_flumy_3d /= h_max
-                entropy_gan_3d /= h_max
-                
-            # JSD expects distributions along axis 0
             jsd_3d = jensenshannon(p_flumy, p_gan, base=2, axis=0) ** 2
-            
-        # 4. Aggregate to the desired slice axis
-        # Dimensions are (Z, Y, X) corresponding to axes (0, 1, 2)
+
         if axis == 'Z':
             agg_axes = (1, 2)
         elif axis == 'Y':
             agg_axes = (0, 2)
-        else: # axis == 'X'
+        else:
             agg_axes = (0, 1)
             
         slice_entropy_flumy = np.nanmean(entropy_flumy_3d, axis=agg_axes)
         slice_entropy_gan = np.nanmean(entropy_gan_3d, axis=agg_axes)
         slice_jsd = np.nanmean(jsd_3d, axis=agg_axes)
         
-        # 5. Build Results DataFrame
+        num_slices = {'Z': nz, 'Y': ny, 'X': nx}[axis]
         results = [{
             'Axis': axis,
             'Slice_Index': idx,
@@ -1422,7 +1425,6 @@ class PostProcessing:
         
         df_results = pd.DataFrame(results)
         
-        # 6. Summary Statistics and Output
         summary_stats = {
             'Flumy_Entropy_Mean': df_results['Flumy_Norm_Entropy'].mean(),
             'Flumy_Entropy_Std': df_results['Flumy_Norm_Entropy'].std(),
@@ -1433,13 +1435,12 @@ class PostProcessing:
         }
 
         print(f"\n--- Summary Statistics ({axis}-Axis) ---")
-        print(f"{self.flumy_name} Entropy: {summary_stats['Flumy_Entropy_Mean']:.4f} ± {summary_stats['Flumy_Entropy_Std']:.4f}")
-        print(f"{self.gan_name} Entropy:  {summary_stats['GAN_Entropy_Mean']:.4f} ± {summary_stats['GAN_Entropy_Std']:.4f}")
-        print(f"JSD (Spatial): {summary_stats['JSD_Mean']:.4f} ± {summary_stats['JSD_Std']:.4f}\n")
+        print(f"Test Baseline Entropy: {summary_stats['Flumy_Entropy_Mean']:.4f} ± {summary_stats['Flumy_Entropy_Std']:.4f}")
+        print(f"{self.gan_name} Model Entropy:  {summary_stats['GAN_Entropy_Mean']:.4f} ± {summary_stats['GAN_Entropy_Std']:.4f}")
+        print(f"Model-to-Baseline Spatial Entropy Ratio: {summary_stats['GAN_Entropy_Mean'] / summary_stats['Flumy_Entropy_Mean']:.4f}")
         
         csv_path = os.path.join(self.output_dir, f"slice_metrics_normalized_{axis}.csv")
         df_results.to_csv(csv_path, index=False)
-        print(f"Saved full slice metrics to: {csv_path}")
 
         if plot:
             self._plot_metric_distributions(df_results, axis)
